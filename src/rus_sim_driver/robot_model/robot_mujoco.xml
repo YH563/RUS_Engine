@@ -1,0 +1,71 @@
+<mujoco model="fairino3_v6_robot">
+  <compiler angle="radian" meshdir="meshes/fairino3_v6/"/>
+
+  <asset>
+    <mesh name="base_link" content_type="model/stl" file="base_link.STL"/>
+    <mesh name="shoulder_link" content_type="model/stl" file="shoulder_link.STL"/>
+    <mesh name="upperarm_link" content_type="model/stl" file="upperarm_link.STL"/>
+    <mesh name="forearm_link" content_type="model/stl" file="forearm_link.STL"/>
+    <mesh name="wrist1_link" content_type="model/stl" file="wrist1_link.STL"/>
+    <mesh name="wrist2_link" content_type="model/stl" file="wrist2_link.STL"/>
+    <mesh name="wrist3_link" content_type="model/stl" file="wrist3_link.STL"/>
+  </asset>
+
+  <actuator>
+    <general name="a1" joint="j1" gear="1"/>
+    <general name="a2" joint="j2" gear="1"/>
+    <general name="a3" joint="j3" gear="1"/>
+    <general name="a4" joint="j4" gear="1"/>
+    <general name="a5" joint="j5" gear="1"/>
+    <general name="a6" joint="j6" gear="1"/>
+  </actuator>
+
+  <contact>
+    <exclude body1="shoulder_link" body2="upperarm_link"/>
+    <exclude body1="upperarm_link" body2="forearm_link"/>
+    <exclude body1="forearm_link" body2="wrist1_link"/>
+    <exclude body1="wrist1_link" body2="wrist2_link"/>
+    <exclude body1="wrist2_link" body2="wrist3_link"/>
+  </contact>
+
+  <worldbody>
+    <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.89804 0.91765 0.92941 1" mesh="base_link"/>
+    <geom type="mesh" contype="0" conaffinity="0" group="2" density="0" rgba="0.89804 0.91765 0.92941 1" mesh="base_link"/>
+    <body name="shoulder_link">
+      <inertial pos="-3.8658e-07 -0.0024176 0.13519" quat="0.999724 0.023485 9.54266e-06 -0.000323006" mass="2.1225" diaginertia="0.0033227 0.00324396 0.00231084"/>
+      <joint name="j1" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543"/>
+      <geom type="mesh" group="1" rgba="0.89804 0.91765 0.92941 1" mesh="shoulder_link"/>
+      <geom type="mesh" contype="0" conaffinity="0" group="2" density="0" rgba="0.89804 0.91765 0.92941 1" mesh="shoulder_link"/>
+      <body name="upperarm_link" pos="0 0 0.14" quat="0.707105 0.707108 0 0">
+        <inertial pos="-0.14111 3.4656e-06 0.11053" quat="0.707351 0 0 0.706862" mass="4.8053" diaginertia="0.0081317 0.0075945 0.0059231"/>
+        <joint name="j2" pos="0 0 0" axis="0 0 1" range="-4.6251 1.4835"/>
+        <geom type="mesh" group="1" rgba="0.89804 0.91765 0.92941 1" mesh="upperarm_link"/>
+        <geom type="mesh" contype="0" conaffinity="0" group="2" density="0" rgba="0.89804 0.91765 0.92941 1" mesh="upperarm_link"/>
+        <body name="forearm_link" pos="-0.28 0 0">
+          <inertial pos="-0.18987 5.2268e-06 0.0034145" quat="0.619998 0.340883 0.340816 0.619069" mass="2.2312" diaginertia="0.0035145 0.00294102 0.00286278"/>
+          <joint name="j3" pos="0 0 0" axis="0 0 1" range="-2.8274 2.8274"/>
+          <geom type="mesh" group="1" rgba="0.89804 0.91765 0.92941 1" mesh="forearm_link"/>
+          <geom type="mesh" contype="0" conaffinity="0" group="2" density="0" rgba="0.89804 0.91765 0.92941 1" mesh="forearm_link"/>
+          <body name="wrist1_link" pos="-0.24001 0 0">
+            <inertial pos="4.5665e-07 -0.0034666 0.098292" quat="0.731738 0.681586 -8.20656e-05 9.46714e-05" mass="1.5961" diaginertia="0.0020112 0.00190991 0.00145009"/>
+            <joint name="j4" pos="0 0 0" axis="0 0 1" range="-4.6251 1.4835"/>
+            <geom type="mesh" group="1" rgba="0.89804 0.91765 0.92941 1" mesh="wrist1_link"/>
+            <geom type="mesh" contype="0" conaffinity="0" group="2" density="0" rgba="0.89804 0.91765 0.92941 1" mesh="wrist1_link"/>
+            <body name="wrist2_link" pos="0 0 0.102" quat="0.707105 0.707108 0 0">
+              <inertial pos="-4.5262e-07 0.0034666 0.098292" quat="0.681586 0.731738 9.46715e-05 -8.20655e-05" mass="1.5961" diaginertia="0.0020112 0.00190991 0.00145009"/>
+              <joint name="j5" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543"/>
+              <geom type="mesh" group="1" rgba="0.89804 0.91765 0.92941 1" mesh="wrist2_link"/>
+              <geom type="mesh" contype="0" conaffinity="0" group="2" density="0" rgba="0.89804 0.91765 0.92941 1" mesh="wrist2_link"/>
+              <body name="wrist3_link" pos="0 0 0.102" quat="0.707105 -0.707108 0 0">
+                <inertial pos="7.559e-05 1.3858e-05 0.076619" quat="-0.000131877 0.706753 0.00106344 0.70746" mass="0.53877" diaginertia="0.00042655 0.00028896 0.00028785"/>
+                <joint name="j6" pos="0 0 0" axis="0 0 1" range="-3.0543 3.0543"/>
+                <geom type="mesh" group="1" rgba="0.89804 0.91765 0.92941 1" mesh="wrist3_link"/>
+                <geom type="mesh" contype="0" conaffinity="0" group="2" density="0" rgba="0.89804 0.91765 0.92941 1" mesh="wrist3_link"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
