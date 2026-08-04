@@ -1,5 +1,7 @@
 #include "driver/sim_driver.hpp"
 
+#include "components/kinematics.hpp"
+
 // 模型文件路径
 static const std::string kShareDir = []() -> std::string {
     try {
@@ -20,8 +22,9 @@ namespace RusSimRobotDriver {
         Connect(ip);
 
         // 创建轨迹调度器与 CTC 控制器
-        trajectory_executor_ = std::make_unique<RusRobotDriver::TrajectoryExecutor>(
-            ki_model_, flange_offset_);
+        // 运动学统一封装在 KinematicsSolver 中，由调度器持有并下发给各轨迹段
+        auto kinematics = std::make_shared<RusRobotDriver::KinematicsSolver>(ki_model_, flange_offset_);
+        trajectory_executor_ = std::make_unique<RusRobotDriver::TrajectoryExecutor>(kinematics);
         trajectory_executor_->Start();
 
         auto dynamics = [this](const VectorXd& q, const VectorXd& qd,

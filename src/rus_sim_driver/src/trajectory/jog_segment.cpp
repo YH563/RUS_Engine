@@ -8,15 +8,13 @@ namespace RusRobotDriver {
 
     // ---- 构造 ----
     JogSegment::JogSegment(const MotionCommand& cmd, const RobotState& state,
-                           std::shared_ptr<const EAIK::Robot> ki_model,
-                           double flange_offset)
+                           std::shared_ptr<const KinematicsSolver> kinematics)
         : motion_type_(cmd.type)
         , jog_axis_(cmd.jog_axis)
         , jog_dir_(cmd.jog_dir)
         , speed_ratio_(std::clamp(cmd.speed, 0.0, 1.0))
         , max_dis_(cmd.jog_max_dis)
-        , ki_model_(std::move(ki_model))
-        , flange_offset_(flange_offset)
+        , kinematics_(std::move(kinematics))
     {
         // 初始位置等于当前关节角
         q_des_  = state.joint_pos;
@@ -82,7 +80,7 @@ namespace RusRobotDriver {
     void JogSegment::step_cartesian_jog(double dt, const RobotState& /*state*/)
     {
         // 1. FK 得到 TCP 位姿（与 PlannedSegment 约定一致）
-        Eigen::Matrix4d T = forward_kinematics(q_des_);
+        Eigen::Matrix4d T = kinematics_->ForwardKinematics(q_des_);
 
         double base_speed = (jog_axis_ <= 3) ? kCartTransSpeed : kCartRotSpeed;
         double step_mag = speed_ratio_ * base_speed * dt;
@@ -118,33 +116,12 @@ namespace RusRobotDriver {
         }
         accumulated_dis_ += std::abs(step_mag);
 
-        // 2. IK：TCP 位姿 → 法兰位姿（与 PlannedSegment::inverse_kinematics 一致）
-        if (flange_offset_ != 0.0) {
-            T(0, 3) -= flange_offset_ * T(0, 2);
-            T(1, 3) -= flange_offset_ * T(1, 2);
-            T(2, 3) -= flange_offset_ * T(2, 2);
-        }
-        IKS::IK_Solution ik = ki_model_->calculate_IK(T);
+        // 2. IK：TCP 位姿 → 法兰位姿（KinematicsSolver 内部处理偏移补偿 + 选解）
+        IKS::IK_Solution ik = kinematics_->InverseKinematics(T);
         if (!ik.Q.empty()) {
-            double best_dist = std::numeric_limits<double>::max();
-            int best_idx = -1;
-            for (size_t i = 0; i < ik.Q.size(); ++i) {
-                if (ik.is_LS_vec[i]) continue;
-                double dist = 0.0;
-                for (size_t j = 0; j < ik.Q[i].size() && j < (size_t)q_des_.size(); ++j) {
-                    double d = ik.Q[i][j] - q_des_(j);
-                    d = std::atan2(std::sin(d), std::cos(d));
-                    dist += d * d;
-                }
-                if (dist < best_dist) {
-                    best_dist = dist;
-                    best_idx = static_cast<int>(i);
-                }
-            }
-            if (best_idx >= 0) {
-                for (size_t i = 0; i < ik.Q[best_idx].size(); ++i)
-                    q_des_(i) = ik.Q[best_idx][i];
-            }
+            VectorXd q_out;
+            if (kinematics_->PickBestIK(ik, q_des_, q_out) >= 0)
+                q_des_ = q_out;
         }
         // 3. 通过雅可比映射笛卡尔速度 → 关节速度
         {
@@ -177,52 +154,9 @@ namespace RusRobotDriver {
             }
 
             // TCP 雅可比 + 动态阻尼最小二乘（DLS）
-            Eigen::MatrixXd J = compute_numerical_jacobian(q_des_);
+            Eigen::MatrixXd J = kinematics_->NumericalJacobian(q_des_);
             qd_des_ = damped_least_squares(J, twist, 0.05, 0.5, 0.02);
         }
-    }
-
-    // ---- forward_kinematics — 正运动学（含法兰偏移补偿） ----
-    //  返回 TCP 位姿：p_tcp = p_flange + offset * R(:,2)（与 PlannedSegment 一致）
-    Eigen::Matrix4d JogSegment::forward_kinematics(const VectorXd& joint_pos) const
-    {
-        Eigen::Matrix4d T = ki_model_->fwdkin_Eigen(joint_pos);
-
-        if (flange_offset_ != 0.0) {
-            T(0, 3) += flange_offset_ * T(0, 2);
-            T(1, 3) += flange_offset_ * T(1, 2);
-            T(2, 3) += flange_offset_ * T(2, 2);
-        }
-        return T;
-    }
-
-    // ---- compute_numerical_jacobian — 数值几何 Jacobian [6×n] ----
-    //  返回 TCP 雅可比（与 forward_kinematics 一致）
-    Eigen::MatrixXd JogSegment::compute_numerical_jacobian(const VectorXd& q) const
-    {
-        constexpr double kEps = 1e-6;
-        int n = static_cast<int>(q.size());
-
-        Eigen::Matrix4d T0 = forward_kinematics(q);
-        Eigen::Vector3d p0 = T0.block<3, 1>(0, 3);
-        Eigen::Matrix3d R0 = T0.block<3, 3>(0, 0);
-
-        Eigen::MatrixXd J(6, n);
-        for (int i = 0; i < n; ++i) {
-            VectorXd q_eps = q;
-            q_eps(i) += kEps;
-
-            Eigen::Matrix4d T1 = forward_kinematics(q_eps);
-            J.block<3, 1>(0, i) = (T1.block<3, 1>(0, 3) - p0) / kEps;
-
-            Eigen::Matrix3d R_rel = R0.transpose() * T1.block<3, 3>(0, 0);
-            Eigen::AngleAxisd aa(R_rel);
-            if (aa.angle() > 1e-10)
-                J.block<3, 1>(3, i) = aa.axis() * aa.angle() / kEps;
-            else
-                J.block<3, 1>(3, i) = Eigen::Vector3d::Zero();
-        }
-        return J;
     }
 
 }  // namespace RusRobotDriver

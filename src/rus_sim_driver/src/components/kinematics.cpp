@@ -1,5 +1,7 @@
 #include "components/kinematics.hpp"
 
+#include <limits>
+
 namespace RusRobotDriver {
 
     // ── Solver ──
@@ -96,4 +98,4 @@ namespace RusRobotDriver {
         return best_idx;
     }
 
-}  // namespace RusKinematics
+}  // namespace RusRobotDriver

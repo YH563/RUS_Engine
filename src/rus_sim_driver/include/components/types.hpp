@@ -7,10 +7,12 @@
 #include <variant>
 #include <vector>
 
-#include "robot_types.h"
+#include "rus_sim_utils/robot_state.hpp"
 
 namespace RusRobotDriver {
     using Eigen::VectorXd;
+    using RusUtils::ControlTarget;  // 期望控制目标（通用类型）
+    using RusUtils::RobotState;     // 机器人状态（通用类型）
 
     //  运动指令类型常量
     constexpr uint8_t MOTION_TYPE_JOINT  = 0;  // 关节空间运动 (MoveJ)
@@ -135,42 +137,5 @@ namespace RusRobotDriver {
      */
     RobotCommand ParseCommand(std::string_view name, const std::vector<double>& args);
 
-    // 控制目标结构体
-    struct ControlTarget{
-        VectorXd q_des;   // 期望关节位置 [rad]
-        VectorXd qd_des;  // 期望关节速度 [rad/s]
-        VectorXd qdd_des; // 期望关节加速度 [rad/s²]
-    };
-
-    //  机器人状态
-    struct RobotState
-    {
-        VectorXd flange_pos;  // 法兰在基坐标系下的位姿，XYZABC，单位 m 和 rad
-        VectorXd joint_pos;  // 六个关节位置，单位 rad
-        VectorXd joint_vel;  // 六个关节速度，单位 rad/s
-        VectorXd joint_acc;  // 六个关节加速度，单位 rad/s^2
-        VectorXd effort;    // 六个关节力矩，单位 Nm
-        double timestamp = 0.0;  // 时间戳
-
-        /**
-         * @brief 兼容真实驱动写的转换函数
-         *
-         * @param jPos 关节位置，单位 deg
-         * @param speed 关节速度，单位 deg/s
-         * @param acc 关节加速度，单位 deg/s^2
-         * @param torques 关节力矩，单位 Nm
-         * @param flange 法兰坐标，单位 m/deg，XYZABC
-         * @param time 时间戳
-         */
-        void Convert(JointPos& jPos, float speed[6], float acc[6], float torques[6], DescPose& flange, float& time)
-        {
-            joint_pos = Eigen::Map<VectorXd>(jPos.jPos, 6) / 180 * M_PI_2;
-            joint_vel = Eigen::Map<Eigen::VectorXf>(speed, 6).cast<double>() / 180 * M_PI_2;
-            joint_acc = Eigen::Map<Eigen::VectorXf>(acc, 6).cast<double>() / 180 * M_PI_2;
-            effort.resize(6);
-            effort << flange.tran.x, flange.tran.y, flange.tran.z,
-            flange.rpy.rx / 180 * M_PI_2, flange.rpy.ry / 180 * M_PI_2, flange.rpy.rz / 180 * M_PI_2;
-            timestamp = static_cast<double>(time);
-        }
-    };
+    // 控制目标 / 机器人状态为通用类型（见 rus_sim_utils/robot_state.hpp）
 }

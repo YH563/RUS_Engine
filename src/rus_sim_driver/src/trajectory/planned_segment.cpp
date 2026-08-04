@@ -19,12 +19,10 @@ namespace RusRobotDriver {
     PlannedSegment::PlannedSegment(
         const MotionCommand& cmd,
         const RobotState& start,
-        std::shared_ptr<const EAIK::Robot> ki_model,
-        double flange_offset
+        std::shared_ptr<const KinematicsSolver> kinematics
     )
         : motion_type_(cmd.type)
-        , ki_model_(std::move(ki_model))
-        , flange_offset_(flange_offset)
+        , kinematics_(std::move(kinematics))
         , speed_ratio_(std::clamp(cmd.speed, 0.01, 1.0))
     {
         if (motion_type_ == MOTION_TYPE_JOINT) {
@@ -34,12 +32,12 @@ namespace RusRobotDriver {
                 throw std::runtime_error("PlannedSegment: joint dimension mismatch");
         }
         else if (motion_type_ == MOTION_TYPE_CART) {
-            if (!ki_model_)
-                throw std::runtime_error("PlannedSegment: ki_model required for MoveL");
+            if (!kinematics_)
+                throw std::runtime_error("PlannedSegment: kinematics required for MoveL");
 
-            // 起始位姿：使用 EAIK 正运动学（与 IK 同源，保证一致性）
+            // 起始位姿：使用运动学求解器正解（与 IK 同源，保证一致性）
             {
-                Eigen::Matrix4d T_start = forward_kinematics(start.joint_pos);
+                Eigen::Matrix4d T_start = kinematics_->ForwardKinematics(start.joint_pos);
                 start_pos_  = T_start.block<3,1>(0, 3);
                 start_quat_ = Eigen::Quaterniond(T_start.block<3,3>(0, 0));
             }
@@ -160,8 +158,8 @@ namespace RusRobotDriver {
         T.block<3,3>(0, 0) = quat.toRotationMatrix();
         T.block<3,1>(0, 3) = pos;
 
-        // IK 求解
-        IKS::IK_Solution ik = inverse_kinematics(T);
+        // IK 求解（KinematicsSolver 内部处理法兰偏移补偿）
+        IKS::IK_Solution ik = kinematics_->InverseKinematics(T);
         if (ik.Q.empty()) {
             target.q_des   = state.joint_pos;
             target.qd_des  = VectorXd::Zero(state.joint_pos.size());
@@ -172,7 +170,7 @@ namespace RusRobotDriver {
         // 选解：首帧以 state.joint_pos 为参考，后续跟踪 prev_q_des_ 锁定分支
         VectorXd q_curr;
         const VectorXd& ref = (prev_q_des_.size() > 0) ? prev_q_des_ : state.joint_pos;
-        int best_idx = pick_ik_solution(ik, ref, q_curr);
+        int best_idx = kinematics_->PickBestIK(ik, ref, q_curr);
         if (best_idx < 0) {
             target.q_des   = state.joint_pos;
             target.qd_des  = VectorXd::Zero(state.joint_pos.size());
@@ -182,7 +180,7 @@ namespace RusRobotDriver {
         target.q_des = q_curr;
 
         // ---- 解析速度：qd = J⁻¹ · twist（动态阻尼 DLS） ----
-        Eigen::MatrixXd J = compute_numerical_jacobian(q_curr);
+        Eigen::MatrixXd J = kinematics_->NumericalJacobian(q_curr);
         Eigen::Matrix<double, 6, 1> twist = compute_cartesian_twist(ds);
         target.qd_des = damped_least_squares(J, twist, 0.001, 0.2, 0.02);
 
@@ -199,37 +197,6 @@ namespace RusRobotDriver {
         prev_qd_des_ = target.qd_des;
         prev_q_des_  = q_curr;
         return target;
-    }
-
-    // ---- compute_numerical_jacobian — 数值几何 Jacobian [6×n] ----
-    //  对每个关节 i:  q += ε·eᵢ, FK 得到 p1, R1
-    //    J_lin[:,i] = (p1 - p0) / ε
-    //    J_ang[:,i] = axis_angle(R0ᵀ·R1) / ε
-    Eigen::MatrixXd PlannedSegment::compute_numerical_jacobian(const VectorXd& q) const
-    {
-        constexpr double kEps = 1e-6;
-        int n = static_cast<int>(q.size());
-
-        Eigen::Matrix4d T0 = forward_kinematics(q);
-        Eigen::Vector3d p0 = T0.block<3,1>(0, 3);
-        Eigen::Matrix3d R0 = T0.block<3,3>(0, 0);
-
-        Eigen::MatrixXd J(6, n);
-        for (int i = 0; i < n; ++i) {
-            VectorXd q_eps = q;
-            q_eps(i) += kEps;
-
-            Eigen::Matrix4d T1 = forward_kinematics(q_eps);
-            J.block<3,1>(0, i) = (T1.block<3,1>(0, 3) - p0) / kEps;
-
-            Eigen::Matrix3d R_rel = R0.transpose() * T1.block<3,3>(0, 0);
-            Eigen::AngleAxisd aa(R_rel);
-            if (aa.angle() > 1e-10)
-                J.block<3,1>(3, i) = aa.axis() * aa.angle() / kEps;
-            else
-                J.block<3,1>(3, i) = Eigen::Vector3d::Zero();
-        }
-        return J;
     }
 
     // ---- compute_cartesian_twist — 解析笛卡尔速度 [v; ω] ----
@@ -255,66 +222,6 @@ namespace RusRobotDriver {
             twist.segment<3>(3) = start_quat_.toRotationMatrix() * axis * angle * ds;
         }
         return twist;
-    }
-
-    // ---- forward_kinematics — 正运动学（含法兰偏移） ----
-    Eigen::Matrix4d PlannedSegment::forward_kinematics(const VectorXd& joint_pos) const
-    {
-        Eigen::Matrix4d T = ki_model_->fwdkin_Eigen(joint_pos);
-        if (flange_offset_ != 0.0) {
-            T(0, 3) += flange_offset_ * T(0, 2);
-            T(1, 3) += flange_offset_ * T(1, 2);
-            T(2, 3) += flange_offset_ * T(2, 2);
-        }
-        return T;
-    }
-
-    // ---- inverse_kinematics — 逆运动学（含法兰偏移补偿） ----
-    IKS::IK_Solution PlannedSegment::inverse_kinematics(const Eigen::Matrix4d& pose) const
-    {
-        Eigen::Matrix4d T = pose;
-        if (flange_offset_ != 0.0) {
-            T(0, 3) -= flange_offset_ * T(0, 2);
-            T(1, 3) -= flange_offset_ * T(1, 2);
-            T(2, 3) -= flange_offset_ * T(2, 2);
-        }
-        return ki_model_->calculate_IK(T);
-    }
-
-    // ---- pick_ik_solution — 从 IK 多解中选取最佳解 ----
-    //  策略：
-    //    1. 轨迹跟踪：以 ref（首帧 state 或后续 prev_q_des_）为参考
-    //    2. 角度环绕：diff = normalize(q_i - ref) 到 [-π, π]
-    int PlannedSegment::pick_ik_solution(const IKS::IK_Solution& ik,
-                                         const VectorXd& ref,
-                                         VectorXd& q_out) const
-    {
-        int best_idx = -1;
-        double best_dist = std::numeric_limits<double>::max();
-
-        for (size_t i = 0; i < ik.Q.size(); ++i) {
-            if (ik.is_LS_vec[i]) continue;
-
-            // 计算带角度环绕处理的加权距离
-            double dist = 0.0;
-            for (size_t j = 0; j < ik.Q[i].size() && j < (size_t)ref.size(); ++j) {
-                double d = ik.Q[i][j] - ref(j);
-                d = std::atan2(std::sin(d), std::cos(d));  // 归一化到 [-π, π]
-                dist += d * d;  // 平方和
-            }
-
-            if (dist < best_dist) {
-                best_dist = dist;
-                best_idx = static_cast<int>(i);
-            }
-        }
-
-        if (best_idx < 0) return -1;
-
-        q_out.resize(ik.Q[best_idx].size());
-        for (size_t i = 0; i < ik.Q[best_idx].size(); ++i)
-            q_out(i) = ik.Q[best_idx][i];
-        return best_idx;
     }
 
 }  // namespace RusRobotDriver

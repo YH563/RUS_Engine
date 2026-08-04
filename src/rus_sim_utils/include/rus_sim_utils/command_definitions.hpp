@@ -5,6 +5,10 @@
 
 namespace RusUtils
 {
+    /**
+     * @brief 面向用户侧执行的高层指令
+     * 
+     */
     namespace Cmd
     {
         // 开始进行预扫查
@@ -19,5 +23,17 @@ namespace RusUtils
         inline constexpr std::string_view kPlan = "plan";
         // 执行规划好的轨迹
         inline constexpr std::string_view kExecute = "execute";
+        // 停止所有运动（急停）
+        inline constexpr std::string_view kStop = "stop";
+        // 暂停扫查
+        inline constexpr std::string_view kPause = "pause";
+        // 继续扫查
+        inline constexpr std::string_view kResume = "resume";
+        // 错误复位
+        inline constexpr std::string_view kReset = "reset";
+        // 连接驱动、上使能
+        inline constexpr std::string_view kConnect = "connect";
+        // 关闭系统
+        inline constexpr std::string_view kShutdown = "shutdown";
     }
 }

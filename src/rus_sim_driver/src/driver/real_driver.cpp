@@ -2,7 +2,37 @@
 #include "robot.h"
 #include "robot_types.h"
 
+#include <cmath>
+
 namespace RusRealRobotDriver {
+
+    namespace {
+        // SDK 状态（fairino）→ 通用 RobotState；角度 度 → 弧度
+        RusRobotDriver::RobotState convert_sdk_state(
+            JointPos& jPos, float speed[6], float acc[6],
+            float torques[6], DescPose& flange, float time)
+        {
+            RusRobotDriver::RobotState s;
+
+            // 法兰位姿 XYZABC [m/rad]，rx/ry/rz 度 → 弧度
+            s.flange_pos.resize(6);
+            s.flange_pos << flange.tran.x, flange.tran.y, flange.tran.z,
+                flange.rpy.rx / 180.0 * M_PI, flange.rpy.ry / 180.0 * M_PI,
+                flange.rpy.rz / 180.0 * M_PI;
+
+            // 关节位置 / 速度 / 加速度，度 → 弧度
+            s.joint_pos = Eigen::Map<Eigen::VectorXd>(jPos.jPos, 6) / 180.0 * M_PI;
+            s.joint_vel = Eigen::Map<Eigen::VectorXf>(speed, 6).cast<double>() / 180.0 * M_PI;
+            s.joint_acc = Eigen::Map<Eigen::VectorXf>(acc, 6).cast<double>() / 180.0 * M_PI;
+
+            // 关节力矩 [Nm]
+            s.effort = Eigen::Map<Eigen::VectorXf>(torques, 6).cast<double>();
+
+            s.timestamp = static_cast<double>(time);
+            return s;
+        }
+    }  // namespace
+
     RobotRealDriver::RobotRealDriver(const std::string& ip)
     {
         robot = FRRobot();
@@ -25,7 +55,7 @@ namespace RusRealRobotDriver {
         robot.GetJointTorques(flag, torques);
         robot.GetActualToolFlangePose(flag, &flange);
         robot.GetSystemClock(&time);
-        robot_state.Convert(jPos, speed, acc, torques, flange, time);
+        robot_state = convert_sdk_state(jPos, speed, acc, torques, flange, time);
         return 0;
     }
 

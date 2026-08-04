@@ -9,11 +9,9 @@ namespace RusRobotDriver {
     // ---- 构造 ----
     ServoSegment::ServoSegment(const MotionCommand& cmd,
                                const RobotState& state,
-                               std::shared_ptr<const EAIK::Robot> ki_model,
-                               double flange_offset)
+                               std::shared_ptr<const KinematicsSolver> kinematics)
         : motion_type_(cmd.type)
-        , ki_model_(std::move(ki_model))
-        , flange_offset_(flange_offset)
+        , kinematics_(std::move(kinematics))
     {
         // 根据模式获取首帧目标关节角
         VectorXd q_target;
@@ -122,61 +120,17 @@ namespace RusRobotDriver {
                               sz*cy,  sz*sy*sx + cz*cx,  sz*sy*cx - cz*sx,
                               -sy,    cy*sx,             cy*cx;
 
-        IKS::IK_Solution ik = inverse_kinematics(T);
+        IKS::IK_Solution ik = kinematics_->InverseKinematics(T);
         if (ik.Q.empty())
             return state.joint_pos;  // IK 无解，保持当前位置
 
         VectorXd q_out;
-        int ret = pick_best_ik(ik, state.joint_pos, q_out);
+        int ret = kinematics_->PickBestIK(ik, state.joint_pos, q_out);
         if (ret < 0) {
             // 所有解都是最小二乘近似（目标位姿不可达），保持当前位置
             return state.joint_pos;
         }
         return q_out;
-    }
-
-    // ---- inverse_kinematics — 逆运动学（含法兰偏移补偿） ----
-    IKS::IK_Solution ServoSegment::inverse_kinematics(const Eigen::Matrix4d& pose) const
-    {
-        Eigen::Matrix4d T = pose;
-        if (flange_offset_ != 0.0) {
-            T(0, 3) -= flange_offset_ * T(0, 2);
-            T(1, 3) -= flange_offset_ * T(1, 2);
-            T(2, 3) -= flange_offset_ * T(2, 2);
-        }
-        return ki_model_->calculate_IK(T);
-    }
-
-    // ---- pick_best_ik — 选距离参考关节角最近的解（含角度环绕） ----
-    int ServoSegment::pick_best_ik(const IKS::IK_Solution& ik,
-                                   const VectorXd& ref,
-                                   VectorXd& q_out) const
-    {
-        int best_idx = -1;
-        double best_dist = std::numeric_limits<double>::max();
-
-        for (size_t i = 0; i < ik.Q.size(); ++i) {
-            if (ik.is_LS_vec[i]) continue;
-
-            double dist = 0.0;
-            for (size_t j = 0; j < ik.Q[i].size() && j < (size_t)ref.size(); ++j) {
-                double d = ik.Q[i][j] - ref(j);
-                d = std::atan2(std::sin(d), std::cos(d));
-                dist += d * d;
-            }
-
-            if (dist < best_dist) {
-                best_dist = dist;
-                best_idx = static_cast<int>(i);
-            }
-        }
-
-        if (best_idx < 0) return -1;
-
-        q_out.resize(ik.Q[best_idx].size());
-        for (size_t i = 0; i < ik.Q[best_idx].size(); ++i)
-            q_out(i) = ik.Q[best_idx][i];
-        return best_idx;
     }
 
 }  // namespace RusRobotDriver

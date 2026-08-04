@@ -70,4 +70,4 @@ namespace RusRobotDriver {
         double flange_offset_;
     };
 
-}  // namespace RusKinematics
+}  // namespace RusRobotDriver

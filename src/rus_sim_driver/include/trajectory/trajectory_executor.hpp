@@ -4,7 +4,7 @@
 #include <memory>
 
 #include "components/types.hpp"
-#include "EAIK/EAIK.h"
+#include "components/kinematics.hpp"
 
 namespace RusRobotDriver {
 
@@ -113,11 +113,9 @@ namespace RusRobotDriver {
         /**
          * @brief 构造轨迹调度器
          * 
-         * @param ki_model      EAIK 运动学模型（MoveL 需要）
-         * @param flange_offset 法兰偏移量（可选，默认 0）
+         * @param kinematics 运动学求解器（MoveL / ServoCart / 笛卡尔点动需要）
          */
-        TrajectoryExecutor(std::shared_ptr<const EAIK::Robot> ki_model = nullptr,
-                           double flange_offset = 0.0);
+        TrajectoryExecutor(std::shared_ptr<const KinematicsSolver> kinematics = nullptr);
 
         // === 指令输入 ===
 
@@ -218,9 +216,8 @@ namespace RusRobotDriver {
         /** @brief 从队列中清空所有点动指令 */
         void clear_jog_commands();
 
-        // === 运动学模型 ===
-        std::shared_ptr<const EAIK::Robot> ki_model_;
-        double flange_offset_{0.0};
+        // === 运动学求解器（MoveL / ServoCart / 笛卡尔点动需要） ===
+        std::shared_ptr<const KinematicsSolver> kinematics_;
 
         // === 调度器状态 ===
         enum class ExecState { STOPPED, RUNNING, PAUSED };

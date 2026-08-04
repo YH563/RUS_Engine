@@ -4,7 +4,7 @@
 #include <Eigen/Geometry>
 
 #include "trajectory_executor.hpp"
-#include "EAIK/EAIK.h"
+#include "components/kinematics.hpp"
 
 namespace RusRobotDriver {
 
@@ -23,14 +23,12 @@ namespace RusRobotDriver {
          * 
          * @param cmd           运动指令（含 type, target, speed, acceleration）
          * @param start         起始机器人状态
-         * @param ki_model      EAIK 运动学模型（MoveL 需要）
-         * @param flange_offset 法兰偏移量
+         * @param kinematics    运动学求解器（MoveL 需要）
          */
         PlannedSegment(
             const MotionCommand& cmd,
             const RobotState& start,
-            std::shared_ptr<const EAIK::Robot> ki_model = nullptr,
-            double flange_offset = 0.0
+            std::shared_ptr<const KinematicsSolver> kinematics = nullptr
         );
 
         /**
@@ -90,41 +88,9 @@ namespace RusRobotDriver {
                                          const RobotState& state, double dt) const;
 
         /**
-         * @brief 数值几何 Jacobian [6×n]：扰动 FK 差分得雅可比列
-         */
-        Eigen::MatrixXd compute_numerical_jacobian(const VectorXd& q) const;
-
-        /**
          * @brief 解析笛卡尔速度 [v; ω]：从插值路径 s(t) 导数计算
          */
         Eigen::Matrix<double, 6, 1> compute_cartesian_twist(double ds) const;
-
-        /**
-         * @brief 带法兰偏移补偿的正运动学
-         */
-        Eigen::Matrix4d forward_kinematics(const VectorXd& joint_pos) const;
-
-        /**
-         * @brief 带法兰偏移补偿的逆运动学
-         */
-        IKS::IK_Solution inverse_kinematics(const Eigen::Matrix4d& pose) const;
-
-        /**
-         * @brief 从 IK 多解中选取最佳解
-         *
-         * 策略：
-         *   1. 轨迹跟踪：后续帧以 prev_q_des_ 为参考，确保同一分支
-         *   2. 角度环绕处理：各关节差值归一化到 [-π, π]
-         *   3. 首帧以 state.joint_pos 为参考
-         * 
-         * @param ik     IK 解集
-         * @param ref    参考关节角（用于选最近解）
-         * @param q_out 输出：选中的关节角向量
-         * @return int  选中的解索引，-1 表示无有效解
-         */
-        int pick_ik_solution(const IKS::IK_Solution& ik,
-                             const VectorXd& ref,
-                             VectorXd& q_out) const;
 
         // === 运动模式 ===
         uint8_t motion_type_;
@@ -144,8 +110,8 @@ namespace RusRobotDriver {
         Eigen::Quaterniond target_quat_;     // 目标姿态（四元数）
 
         // === EAIK 运动学模型（仅 MoveL 需要） ===
-        std::shared_ptr<const EAIK::Robot> ki_model_;
-        double flange_offset_{0.0};
+        // === 运动学求解器（仅 MoveL 需要） ===
+        std::shared_ptr<const KinematicsSolver> kinematics_;
 
         // === 速度/加速度参数 ===
         double speed_ratio_{0.5};

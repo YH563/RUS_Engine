@@ -12,6 +12,9 @@
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
   <depend>rus_sim_interfaces</depend>
+  <depend>rus_sim_utils</depend>
+  <depend>yasmin</depend>
+  <depend>yasmin_ros</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

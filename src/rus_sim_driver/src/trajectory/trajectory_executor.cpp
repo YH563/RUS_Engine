@@ -18,10 +18,8 @@ namespace RusRobotDriver {
         }
     }
 
-    TrajectoryExecutor::TrajectoryExecutor(std::shared_ptr<const EAIK::Robot> ki_model,
-                                           double flange_offset)
-        : ki_model_(std::move(ki_model))
-        , flange_offset_(flange_offset)
+    TrajectoryExecutor::TrajectoryExecutor(std::shared_ptr<const KinematicsSolver> kinematics)
+        : kinematics_(std::move(kinematics))
     {}
 
     void TrajectoryExecutor::PushBack(const MotionCommand& cmd)
@@ -156,7 +154,7 @@ namespace RusRobotDriver {
         if (cmd.type == MOTION_TYPE_JOINT) {
             active_segment_ = std::make_unique<PlannedSegment>(cmd, state);
         } else if (cmd.type == MOTION_TYPE_CART) {
-            active_segment_ = std::make_unique<PlannedSegment>(cmd, state, ki_model_, flange_offset_);
+            active_segment_ = std::make_unique<PlannedSegment>(cmd, state, kinematics_);
         }
     }
 
@@ -176,7 +174,7 @@ namespace RusRobotDriver {
         if (active_segment_ && is_servo_type(active_segment_->GetType())) {
             active_segment_->UpdateTarget(last_servo, state);
         } else {
-            active_segment_ = std::make_unique<ServoSegment>(last_servo, state, ki_model_, flange_offset_);
+            active_segment_ = std::make_unique<ServoSegment>(last_servo, state, kinematics_);
         }
     }
 
@@ -197,12 +195,12 @@ namespace RusRobotDriver {
             // 运动类型改变时（如 JOG_0↔JOG_1）重建段，确保 motion_type_ 正确
             if (active_segment_->GetType() != last_jog_cmd_.type) {
                 active_segment_.reset();
-                active_segment_ = std::make_unique<JogSegment>(last_jog_cmd_, state, ki_model_, flange_offset_);
+                active_segment_ = std::make_unique<JogSegment>(last_jog_cmd_, state, kinematics_);
             } else {
                 active_segment_->UpdateTarget(last_jog_cmd_, state);
             }
         } else {
-            active_segment_ = std::make_unique<JogSegment>(last_jog_cmd_, state, ki_model_, flange_offset_);
+            active_segment_ = std::make_unique<JogSegment>(last_jog_cmd_, state, kinematics_);
         }
 
         // 新点动指令到达时取消减速，直接接管

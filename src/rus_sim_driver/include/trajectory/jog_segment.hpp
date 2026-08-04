@@ -4,7 +4,7 @@
 #include <Eigen/Geometry>
 
 #include "trajectory_executor.hpp"
-#include "EAIK/EAIK.h"
+#include "components/kinematics.hpp"
 
 namespace RusRobotDriver {
 
@@ -24,14 +24,12 @@ namespace RusRobotDriver {
         /**
          * @brief 构造点动段
          *
-         * @param cmd           运动指令（含 JOG 参数）
-         * @param state         当前机器人状态
-         * @param ki_model      EAIK 运动学模型（JOG_1/2 需要）
-         * @param flange_offset 法兰偏移量
+         * @param cmd        运动指令（含 JOG 参数）
+         * @param state      当前机器人状态
+         * @param kinematics 运动学求解器（JOG_1/2 需要）
          */
         JogSegment(const MotionCommand& cmd, const RobotState& state,
-                   std::shared_ptr<const EAIK::Robot> ki_model = nullptr,
-                   double flange_offset = 0.0);
+                   std::shared_ptr<const KinematicsSolver> kinematics = nullptr);
 
         /**
          * @brief 更新点动参数（轴号/方向/速度等）
@@ -72,9 +70,8 @@ namespace RusRobotDriver {
         VectorXd q_des_;
         VectorXd qd_des_;
 
-        // 运动学
-        std::shared_ptr<const EAIK::Robot> ki_model_;
-        double flange_offset_{0.0};
+        // 运动学求解器（JOG_1/2 需要）
+        std::shared_ptr<const KinematicsSolver> kinematics_;
 
         static constexpr double kBaseSpeed      = 0.5;   // [rad/s] 关节空间基准速度
         static constexpr double kCartTransSpeed = 0.05;  // [m/s]   笛卡尔平移基准速度
@@ -85,12 +82,6 @@ namespace RusRobotDriver {
 
         /** @brief 笛卡尔空间点动：FK→位姿偏移→IK */
         void step_cartesian_jog(double dt, const RobotState& state);
-
-        /** @brief 正运动学（含法兰偏移补偿） */
-        Eigen::Matrix4d forward_kinematics(const VectorXd& joint_pos) const;
-
-        /** @brief 数值几何 Jacobian [6×n] */
-        Eigen::MatrixXd compute_numerical_jacobian(const VectorXd& q) const;
     };
 
 }  // namespace RusRobotDriver

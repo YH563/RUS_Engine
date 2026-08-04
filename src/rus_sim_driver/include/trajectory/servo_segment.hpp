@@ -4,7 +4,7 @@
 #include <Eigen/Geometry>
 
 #include "trajectory_executor.hpp"
-#include "EAIK/EAIK.h"
+#include "components/kinematics.hpp"
 
 namespace RusRobotDriver {
 
@@ -28,15 +28,13 @@ namespace RusRobotDriver {
         /**
          * @brief 构造伺服段，初始化滤波器状态
          *
-         * @param cmd           首帧运动指令（MOTION_TYPE_SERVOJ 或 SERVOC）
-         * @param state         当前机器人状态
-         * @param ki_model      EAIK 运动学模型（ServoCart 需要）
-         * @param flange_offset 法兰偏移量
+         * @param cmd        首帧运动指令（MOTION_TYPE_SERVOJ 或 SERVOC）
+         * @param state      当前机器人状态
+         * @param kinematics 运动学求解器（ServoCart 需要）
          */
         ServoSegment(const MotionCommand& cmd,
                      const RobotState& state,
-                     std::shared_ptr<const EAIK::Robot> ki_model,
-                     double flange_offset = 0.0);
+                     std::shared_ptr<const KinematicsSolver> kinematics = nullptr);
 
         /**
          * @brief 每帧用最新目标更新滤波器
@@ -81,9 +79,8 @@ namespace RusRobotDriver {
         // 每帧最大关节位移 [rad]，防止目标跳变过大
         static constexpr double kMaxStep = 0.05;
 
-        // 运动学
-        std::shared_ptr<const EAIK::Robot> ki_model_;
-        double flange_offset_{0.0};
+        // 运动学求解器（ServoCart 需要）
+        std::shared_ptr<const KinematicsSolver> kinematics_;
 
         /**
          * @brief 执行二阶低通滤波单步递推
@@ -104,18 +101,6 @@ namespace RusRobotDriver {
          */
         VectorXd solve_ik(const MotionCommand& cmd,
                           const RobotState& state) const;
-
-        /**
-         * @brief 带法兰偏移补偿的逆运动学
-         */
-        IKS::IK_Solution inverse_kinematics(const Eigen::Matrix4d& pose) const;
-
-        /**
-         * @brief 从 IK 多解中选距离参考关节角最近的解
-         */
-        int pick_best_ik(const IKS::IK_Solution& ik,
-                         const VectorXd& ref,
-                         VectorXd& q_out) const;
     };
 
 }  // namespace RusRobotDriver
