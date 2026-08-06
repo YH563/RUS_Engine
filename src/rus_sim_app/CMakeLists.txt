@@ -12,8 +12,6 @@ find_package(std_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(rus_sim_interfaces REQUIRED)
 find_package(rus_sim_utils REQUIRED)
-find_package(yasmin REQUIRED)
-find_package(yasmin_ros REQUIRED)
 
 # ── 应用核心库（FSM / 用户接口 / 任务客户端 / 协调器）──
 # CONFIGURE_DEPENDS：新增/删除源文件时自动重新 GLOB，避免缓存缺文件
@@ -24,7 +22,7 @@ target_include_directories(app_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-ament_target_dependencies(app_core PUBLIC rclcpp std_msgs rus_sim_interfaces rus_sim_utils yasmin yasmin_ros)
+ament_target_dependencies(app_core PUBLIC rclcpp std_msgs rus_sim_interfaces rus_sim_utils)
 
 # ── 可执行节点 ──
 add_executable(rus_sim_app_node src/main.cpp)

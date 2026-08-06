@@ -12,6 +12,12 @@ namespace RusUtils {
 
     // ── 高层指令类型（面向用户侧 → 后端） ──
 
+    /** 查询：预扫查是否完成 */
+    struct QueryPreScanDone {};
+
+    /** 查询：运动是否完成 */
+    struct QueryMotionDone {};
+
     /** 开始预扫查（点云建模） */
     struct PreScanStartCmd {};
 
@@ -51,8 +57,9 @@ namespace RusUtils {
 
     // 统一指令承载
     using HighLevelCommand = std::variant<
-        PreScanStartCmd, SetStartPoseCmd, SetEndPoseCmd, PlanCmd, ExecuteCmd,
+        QueryMotionDone, QueryPreScanDone, PreScanStartCmd, SetStartPoseCmd, SetEndPoseCmd, PlanCmd, ExecuteCmd,
         StopCmd, PauseCmd, ResumeCmd, ResetCmd, ConnectCmd, ShutdownCmd>;
+
 
     // std::visit 辅助模板
     template<class... Ts> struct Overloaded : Ts... { using Ts::operator()...; };
@@ -80,7 +87,9 @@ namespace RusUtils {
         if (name == Cmd::kReset)        return ResetCmd{};
         if (name == Cmd::kConnect)      return ConnectCmd{};
         if (name == Cmd::kShutdown)     return ShutdownCmd{};
+        if (name == Cmd::kQueryPreScanDone) return QueryPreScanDone{};
+        if (name == Cmd::kQueryMotionDone)  return QueryMotionDone{};
 
-        throw std::invalid_argument("unknown high-level command: " + std::string(name));
+        return StopCmd{};
     }
 }

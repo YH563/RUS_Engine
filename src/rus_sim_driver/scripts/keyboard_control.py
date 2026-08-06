@@ -28,7 +28,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
-from rus_sim_driver.srv import DriverCommand
+from rus_sim_driver.srv import CommandService
 
 # 按键 → (joint_nb, dir)  nb=1~6，各模式通用
 JOG_KEYS = {
@@ -57,7 +57,7 @@ class KeyboardController(Node):
         super().__init__('keyboard_controller')
 
         # ── 服务客户端 ──
-        self.cli = self.create_client(DriverCommand, '/driver/command')
+        self.cli = self.create_client(CommandService, '/driver/command')
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('等待 /driver/command 服务...')
 
@@ -72,7 +72,7 @@ class KeyboardController(Node):
 
     def _call(self, cmd, args=None):
         """异步调用服务"""
-        req = DriverCommand.Request()
+        req = CommandService.Request()
         req.command = cmd
         req.args = args or []
         self.cli.call_async(req)
@@ -96,7 +96,7 @@ class KeyboardController(Node):
         """减速停止当前点动"""
         if self.active_key is None:
             return
-        req = DriverCommand.Request()
+        req = CommandService.Request()
         req.command = 'stop_jog_decel'
         future = self.cli.call_async(req)
         rclpy.spin_until_future_complete(self, future, timeout_sec=1.0)
@@ -106,7 +106,7 @@ class KeyboardController(Node):
         """立即停止当前点动"""
         if self.active_key is None:
             return
-        req = DriverCommand.Request()
+        req = CommandService.Request()
         req.command = 'stop_jog_immediate'
         future = self.cli.call_async(req)
         rclpy.spin_until_future_complete(self, future, timeout_sec=1.0)

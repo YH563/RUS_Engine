@@ -7,7 +7,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
-#include <rus_sim_interfaces/srv/driver_command.hpp>
+#include <rus_sim_interfaces/srv/command_service.hpp>
 #include <rus_sim_interfaces/msg/robot_state.hpp>
 
 #include "components/command_defs.hpp"
@@ -36,8 +36,8 @@ namespace RusDriverNode {
         // 服务回调：处理 /driver/command
         void handle_command(
             const std::shared_ptr<rmw_request_id_t> req_header,
-            const std::shared_ptr<rus_sim_interfaces::srv::DriverCommand::Request> req,
-            std::shared_ptr<rus_sim_interfaces::srv::DriverCommand::Response> res
+            const std::shared_ptr<rus_sim_interfaces::srv::CommandService::Request> req,
+            std::shared_ptr<rus_sim_interfaces::srv::CommandService::Response> res
         );
 
         // 定时器回调：发布 /driver/state
@@ -68,7 +68,7 @@ namespace RusDriverNode {
         RusSimRobotDriver::RobotSimDriver& sim_driver();
 
         // ROS2 接口
-        rclcpp::Service<rus_sim_interfaces::srv::DriverCommand>::SharedPtr command_server_;
+        rclcpp::Service<rus_sim_interfaces::srv::CommandService>::SharedPtr command_server_;
         rclcpp::Publisher<rus_sim_interfaces::msg::RobotState>::SharedPtr state_pub_;
         rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
         rclcpp::TimerBase::SharedPtr timer_;

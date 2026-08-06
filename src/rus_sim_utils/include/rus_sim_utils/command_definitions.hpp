@@ -35,5 +35,9 @@ namespace RusUtils
         inline constexpr std::string_view kConnect = "connect";
         // 关闭系统
         inline constexpr std::string_view kShutdown = "shutdown";
+        // 查询：预扫查是否完成
+        inline constexpr std::string_view kQueryPreScanDone = "query_prescan_done";
+        // 查询：运动是否完成
+        inline constexpr std::string_view kQueryMotionDone = "query_motion_done";
     }
 }

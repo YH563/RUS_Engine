@@ -18,7 +18,7 @@ set(msg_files
   "msg/RobotState.msg"
 )
 set(srv_files
-  "srv/DriverCommand.srv"
+  "srv/CommandService.srv"
 )
 
 

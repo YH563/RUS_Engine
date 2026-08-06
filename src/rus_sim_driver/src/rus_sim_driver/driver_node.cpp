@@ -25,7 +25,7 @@ namespace RusDriverNode {
         }
 
         // ── Service: /driver/command ──
-        command_server_ = create_service<rus_sim_interfaces::srv::DriverCommand>(
+        command_server_ = create_service<rus_sim_interfaces::srv::CommandService>(
             "/driver/command",
             std::bind(&DriverNode::handle_command, this,
                     std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
@@ -78,8 +78,8 @@ namespace RusDriverNode {
     // ============================================================
     void DriverNode::handle_command(
         const std::shared_ptr<rmw_request_id_t> req_header,
-        const std::shared_ptr<rus_sim_interfaces::srv::DriverCommand::Request> req,
-        std::shared_ptr<rus_sim_interfaces::srv::DriverCommand::Response> res)
+        const std::shared_ptr<rus_sim_interfaces::srv::CommandService::Request> req,
+        std::shared_ptr<rus_sim_interfaces::srv::CommandService::Response> res)
     {
         (void)req_header;
         RCLCPP_INFO(get_logger(), "收到指令: %s (参数数: %zu)", req->command.c_str(), req->args.size());

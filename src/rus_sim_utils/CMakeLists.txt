@@ -13,7 +13,8 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(geometry_msgs REQUIRED)
-
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LWS REQUIRED libwebsockets)
 find_package(Eigen3 REQUIRED)
 
 file(GLOB SRC_FILES src/${PROJECT_NAME}/*.cpp)
@@ -35,6 +36,7 @@ ament_target_dependencies(${PROJECT_NAME} PUBLIC
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
   Eigen3::Eigen
+  ${LWS_LIBRARIES}
 )
 
 install(DIRECTORY include/ DESTINATION include)
