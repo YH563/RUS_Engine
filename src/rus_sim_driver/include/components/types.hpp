@@ -58,19 +58,6 @@ namespace RusRobotDriver {
     struct StopJOGDecelCmd  {};
     struct StopJOGImmediateCmd {};
 
-    // ── 录制 / 回放 ──
-    struct RecordStartCmd   { std::string path; };
-    struct RecordStopCmd    {};
-    struct PlaybackStartCmd { std::string path; };
-    struct PlaybackStopCmd  {};
-    struct PlaybackPauseCmd      {};
-    struct PlaybackResumeCmd     {};
-    struct PlaybackSetSpeedCmd   { double speed; };
-    struct PlaybackSeekCmd       { double time_seconds; };
-    struct PlaybackStepCmd       { int8_t direction; };   // 1 前进, -1 后退
-    struct PlaybackSetLoopCmd    { uint8_t enable; };
-    struct PlaybackGetInfoCmd    {};
-
     // ── 文件执行 ──
     struct RunFileCmd       { std::string path; };
 
@@ -79,7 +66,6 @@ namespace RusRobotDriver {
     struct GetTimeSpeedCmd    {};
     struct GetSimTimeCmd      {};
     struct StepOnceCmd        {};
-    struct IsPlaybackActiveCmd {};
     struct GetFrameRateCmd    {};
 
     //  统一指令承载
@@ -99,21 +85,12 @@ namespace RusRobotDriver {
         StopCmd,           PauseCmd,          ResumeCmd,
         StopJOGDecelCmd,   StopJOGImmediateCmd,
 
-        // 录制 / 回放
-        RecordStartCmd,    RecordStopCmd,
-        PlaybackStartCmd,  PlaybackStopCmd,
-        PlaybackPauseCmd,  PlaybackResumeCmd,
-        PlaybackSetSpeedCmd, PlaybackSeekCmd,
-        PlaybackStepCmd,   PlaybackSetLoopCmd,
-        PlaybackGetInfoCmd,
-
         // 文件执行
         RunFileCmd,
 
         // 仿真控制
         SetTimeSpeedCmd,   GetTimeSpeedCmd,
         GetSimTimeCmd,     StepOnceCmd,
-        IsPlaybackActiveCmd,
         GetFrameRateCmd
     >;
 

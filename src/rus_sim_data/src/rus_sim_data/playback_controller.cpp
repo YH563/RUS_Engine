@@ -1,18 +1,18 @@
-#include "components/playback_controller.hpp"
+#include "rus_sim_data/playback_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstddef>
 
-namespace RusRobotDriver {
+namespace RusSimData {
 
 // ============================================================
 //  数据源
 // ============================================================
 
 void PlaybackController::SetFrames(
-    const std::vector<RusRobotDriver::RobotState>* frames)
+    const std::vector<RusUtils::RobotState>* frames)
 {
     frames_ = frames;
     Reset();
@@ -151,7 +151,7 @@ double PlaybackController::GetProgress() const {
 // ============================================================
 
 bool PlaybackController::Update(double dt_seconds,
-                                 RusRobotDriver::RobotState& out_state,
+                                 RusUtils::RobotState& out_state,
                                  bool* frame_changed)
 {
     if (!frames_ || frames_->empty()) return false;
@@ -201,7 +201,7 @@ bool PlaybackController::Update(double dt_seconds,
 }
 
 bool PlaybackController::GetCurrentState(
-    RusRobotDriver::RobotState& state) const
+    RusUtils::RobotState& state) const
 {
     if (!frames_ || frames_->empty()) return false;
     state = frames_->at(current_frame_);
@@ -256,11 +256,11 @@ std::vector<uint8_t> PlaybackController::SerializeFrames() const {
     return blob;
 }
 
-std::vector<RusRobotDriver::RobotState>
+std::vector<RusUtils::RobotState>
 PlaybackController::DeserializeFrames(const uint8_t* data, size_t size,
                                        uint32_t num_joints)
 {
-    std::vector<RusRobotDriver::RobotState> frames;
+    std::vector<RusUtils::RobotState> frames;
     if (!data || size < 3 * sizeof(uint32_t)) return frames;
 
     const uint8_t* ptr = data;
@@ -284,7 +284,7 @@ PlaybackController::DeserializeFrames(const uint8_t* data, size_t size,
 
     frames.reserve(nf);
     for (uint32_t i = 0; i < nf; ++i) {
-        RusRobotDriver::RobotState st;
+        RusUtils::RobotState st;
         st.joint_pos .resize(nj);
         st.joint_vel .resize(nj);
         st.joint_acc .resize(nj);
@@ -316,7 +316,7 @@ void PlaybackController::sync_frame() {
     // upper_bound: 第一个 timestamp > target 的帧
     auto it = std::upper_bound(
         frames_->begin(), frames_->end(), target,
-        [](double t, const RusRobotDriver::RobotState& s) {
+        [](double t, const RusUtils::RobotState& s) {
             return t < s.timestamp;
         });
 
@@ -328,10 +328,10 @@ void PlaybackController::sync_frame() {
     }
 }
 
-void PlaybackController::lerp_state(const RusRobotDriver::RobotState& a,
-                                     const RusRobotDriver::RobotState& b,
+void PlaybackController::lerp_state(const RusUtils::RobotState& a,
+                                     const RusUtils::RobotState& b,
                                      double t,
-                                     RusRobotDriver::RobotState& out) {
+                                     RusUtils::RobotState& out) {
     double s = 1.0 - t;
     out.flange_pos = a.flange_pos * s + b.flange_pos * t;
     out.joint_pos  = a.joint_pos  * s + b.joint_pos  * t;
@@ -341,4 +341,4 @@ void PlaybackController::lerp_state(const RusRobotDriver::RobotState& a,
     out.timestamp  = a.timestamp  * s + b.timestamp  * t;
 }
 
-}  // namespace RusRobotDriver
+}  // namespace RusSimData

@@ -6,8 +6,6 @@ namespace RusDriverNode {
         // ── 参数 ──
         std::string driver_type = declare_parameter<std::string>("driver_type", "sim");
         std::string robot_ip   = declare_parameter<std::string>("robot_ip", "");
-        record_path_           = declare_parameter<std::string>("record_path", "");
-        playback_path_         = declare_parameter<std::string>("playback_path", "");
         script_path_           = declare_parameter<std::string>("script_path", "");
 
         // ── 创建驱动 ──
@@ -70,7 +68,6 @@ namespace RusDriverNode {
 
     DriverNode::~DriverNode() {
         ws_server_.Stop();
-        recorder_.StopRecording();
     }
 
     // ============================================================
@@ -111,6 +108,7 @@ namespace RusDriverNode {
         msg->joint_acc  = to_vec(state.joint_acc);
         msg->effort     = to_vec(state.effort);
         msg->flange_pos = to_vec(state.flange_pos);
+        msg->timestamp  = state.timestamp;
 
         state_pub_->publish(std::move(msg));
 
@@ -123,10 +121,6 @@ namespace RusDriverNode {
         js->velocity = to_vec(state.joint_vel);
         js->effort   = to_vec(state.effort);
         joint_state_pub_->publish(std::move(js));
-
-        // ── 录制 ──
-        if (recorder_.IsRecording())
-            recorder_.RecordFrame(state);
 
         // ── WebSocket 广播 ──
         ws_server_.Broadcast(state_to_json(state));
@@ -229,7 +223,6 @@ namespace RusDriverNode {
             [&](const GetTimeSpeedCmd&)    { result = {sim_driver().GetTimeSpeed()}; return true; },
             [&](const GetSimTimeCmd&)      { result = {sim_driver().GetSimTime()}; return true; },
             [&](const StepOnceCmd&)        { sim_driver().StepOnce(); return true; },
-            [&](const IsPlaybackActiveCmd&) { result = {sim_driver().IsPlaybackActive() ? 1.0 : 0.0}; return true; },
             [&](const GetFrameRateCmd&)     {
                 if (is_sim_) {
                     result = {sim_driver().GetFrameRate()};
@@ -249,76 +242,6 @@ namespace RusDriverNode {
             [&](const ResumeCmd&)         { return driver_->ResumeMotion() == 0; },
             [&](const StopJOGDecelCmd&)   { return driver_->StopJOGDecel() == 0; },
             [&](const StopJOGImmediateCmd&) { return driver_->StopJOGImmediate() == 0; },
-
-            // ── 录制 / 回放 ──
-            [&](const RecordStartCmd&)    {
-                return recorder_.StartRecording(record_path_);
-            },
-            [&](const RecordStopCmd&)     {
-                recorder_.StopRecording();
-                return true;
-            },
-            [&](const PlaybackStartCmd&)  {
-                if (!is_sim_) {
-                    RCLCPP_WARN(get_logger(), "回放仅支持仿真模式");
-                    return false;
-                }
-                if (!recorder_.LoadRecording(playback_path_)) {
-                    RCLCPP_ERROR(get_logger(), "加载录制文件失败: %s", playback_path_.c_str());
-                    return false;
-                }
-                std::vector<RobotState> frames;
-                frames.reserve(recorder_.GetFrameCount());
-                for (size_t i = 0; i < recorder_.GetFrameCount(); ++i) {
-                    RobotState st;
-                    recorder_.GetFrame(i, st);
-                    frames.push_back(std::move(st));
-                }
-                sim_driver().StartPlayback(frames);
-                RCLCPP_INFO(get_logger(), "开始回放, %zu 帧", frames.size());
-                return true;
-            },
-            [&](const PlaybackStopCmd&)   {
-                sim_driver().StopPlayback();
-                return true;
-            },
-
-            // ── 高级回放控制 ──
-            [&](const PlaybackPauseCmd&)    {
-                if (!is_sim_) return false;
-                sim_driver().PlaybackPause();
-                return true;
-            },
-            [&](const PlaybackResumeCmd&)   {
-                if (!is_sim_) return false;
-                sim_driver().PlaybackResume();
-                return true;
-            },
-            [&](const PlaybackSetSpeedCmd& s) {
-                if (!is_sim_) return false;
-                sim_driver().PlaybackSetSpeed(s.speed);
-                return true;
-            },
-            [&](const PlaybackSeekCmd& s)   {
-                if (!is_sim_) return false;
-                sim_driver().PlaybackSeek(s.time_seconds);
-                return true;
-            },
-            [&](const PlaybackStepCmd& s)   {
-                if (!is_sim_) return false;
-                sim_driver().PlaybackStep(s.direction);
-                return true;
-            },
-            [&](const PlaybackSetLoopCmd& s) {
-                if (!is_sim_) return false;
-                sim_driver().PlaybackSetLoop(s.enable);
-                return true;
-            },
-            [&](const PlaybackGetInfoCmd&)  {
-                if (!is_sim_) return false;
-                sim_driver().GetPlaybackInfo(result);
-                return true;
-            },
 
             // ── 文件执行 ──
             [&](const RunFileCmd&)        {

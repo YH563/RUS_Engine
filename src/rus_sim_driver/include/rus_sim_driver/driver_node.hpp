@@ -12,7 +12,6 @@
 
 #include "components/command_defs.hpp"
 #include "driver/robot_driver.hpp"
-#include "components/data_recorder.hpp"
 #include "rus_sim_utils/ws_server.hpp"
 #include "driver/sim_driver.hpp"
 
@@ -60,8 +59,6 @@ namespace RusDriverNode {
         std::string robot_ip_;  // 机器人 IP（Connect 指令使用）
 
         // 文件路径参数（由构造函数 declare_parameter，供 dispatch 使用）
-        std::string record_path_;
-        std::string playback_path_;
         std::string script_path_;
 
         // 安全获取仿真驱动引用（仅在 is_sim_==true 时调用，实现在 .cpp）
@@ -75,9 +72,6 @@ namespace RusDriverNode {
 
         // 关节名称（用于 /joint_states）
         std::vector<std::string> joint_names_;
-
-        // 工具类
-        RusRobotDriver::DataRecorder recorder_;   /** 运动数据录制/回放 */
 
         // WebSocket 监控服务器
         WsServer ws_server_;

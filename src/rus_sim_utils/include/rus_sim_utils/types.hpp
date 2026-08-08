@@ -55,10 +55,54 @@ namespace RusUtils {
     /** 关闭系统 */
     struct ShutdownCmd {};
 
+    /** 开始录制运动数据 */
+    struct RecordStartCmd {};
+
+    /** 停止录制 */
+    struct RecordStopCmd {};
+
+    /** 开始回放录制数据 */
+    struct PlaybackStartCmd {};
+
+    /** 停止回放 */
+    struct PlaybackStopCmd {};
+
+    /** 暂停回放 */
+    struct PlaybackPauseCmd {};
+
+    /** 继续回放 */
+    struct PlaybackResumeCmd {};
+
+    /** 设置回放速度倍率，args = [speed] */
+    struct PlaybackSetSpeedCmd {
+        std::vector<double> args;
+    };
+
+    /** 跳转回放时间，args = [time_seconds] */
+    struct PlaybackSeekCmd {
+        std::vector<double> args;
+    };
+
+    /** 逐帧步进，args = [direction] */
+    struct PlaybackStepCmd {
+        std::vector<double> args;
+    };
+
+    /** 设置循环播放，args = [enable] */
+    struct PlaybackSetLoopCmd {
+        std::vector<double> args;
+    };
+
+    /** 查询回放信息 */
+    struct PlaybackGetInfoCmd {};
+
     // 统一指令承载
     using HighLevelCommand = std::variant<
         QueryMotionDone, QueryPreScanDone, PreScanStartCmd, SetStartPoseCmd, SetEndPoseCmd, PlanCmd, ExecuteCmd,
-        StopCmd, PauseCmd, ResumeCmd, ResetCmd, ConnectCmd, ShutdownCmd>;
+        StopCmd, PauseCmd, ResumeCmd, ResetCmd, ConnectCmd, ShutdownCmd,
+        RecordStartCmd, RecordStopCmd,
+        PlaybackStartCmd, PlaybackStopCmd, PlaybackPauseCmd, PlaybackResumeCmd,
+        PlaybackSetSpeedCmd, PlaybackSeekCmd, PlaybackStepCmd, PlaybackSetLoopCmd, PlaybackGetInfoCmd>;
 
 
     // std::visit 辅助模板
@@ -89,6 +133,18 @@ namespace RusUtils {
         if (name == Cmd::kShutdown)     return ShutdownCmd{};
         if (name == Cmd::kQueryPreScanDone) return QueryPreScanDone{};
         if (name == Cmd::kQueryMotionDone)  return QueryMotionDone{};
+
+        if (name == Cmd::kRecordStart)      return RecordStartCmd{};
+        if (name == Cmd::kRecordStop)       return RecordStopCmd{};
+        if (name == Cmd::kPlaybackStart)    return PlaybackStartCmd{};
+        if (name == Cmd::kPlaybackStop)     return PlaybackStopCmd{};
+        if (name == Cmd::kPlaybackPause)    return PlaybackPauseCmd{};
+        if (name == Cmd::kPlaybackResume)   return PlaybackResumeCmd{};
+        if (name == Cmd::kPlaybackSetSpeed) return PlaybackSetSpeedCmd{args};
+        if (name == Cmd::kPlaybackSeek)     return PlaybackSeekCmd{args};
+        if (name == Cmd::kPlaybackStep)     return PlaybackStepCmd{args};
+        if (name == Cmd::kPlaybackSetLoop)  return PlaybackSetLoopCmd{args};
+        if (name == Cmd::kPlaybackGetInfo)  return PlaybackGetInfoCmd{};
 
         return StopCmd{};
     }

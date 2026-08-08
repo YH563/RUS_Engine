@@ -86,19 +86,6 @@ namespace RusRobotDriver {
         if (name == kGetState)       return GetStateCmd{args.empty() ? uint8_t{1} : static_cast<uint8_t>(args[0])};
         if (name == kIsMotionDone)   return IsMotionDoneCmd{};
 
-        // ── 录制 / 回放（path 由调用方设置） ──
-        if (name == kRecordStart)    return RecordStartCmd{};
-        if (name == kRecordStop)     return RecordStopCmd{};
-        if (name == kPlaybackStart)  return PlaybackStartCmd{};
-        if (name == kPlaybackStop)   return PlaybackStopCmd{};
-        if (name == kPlaybackPause)      return PlaybackPauseCmd{};
-        if (name == kPlaybackResume)     return PlaybackResumeCmd{};
-        if (name == kPlaybackSetSpeed)   return PlaybackSetSpeedCmd{args.empty() ? 1.0 : args[0]};
-        if (name == kPlaybackSeek)       return PlaybackSeekCmd{args.empty() ? 0.0 : args[0]};
-        if (name == kPlaybackStep)       return PlaybackStepCmd{args.empty() ? int8_t{1} : static_cast<int8_t>(args[0])};
-        if (name == kPlaybackSetLoop)    return PlaybackSetLoopCmd{args.empty() ? uint8_t{1} : static_cast<uint8_t>(args[0])};
-        if (name == kPlaybackGetInfo)    return PlaybackGetInfoCmd{};
-
         // ── 文件执行（path 由调用方设置） ──
         if (name == kRunFile)        return RunFileCmd{};
 
@@ -107,7 +94,6 @@ namespace RusRobotDriver {
         if (name == kGetTimeSpeed)   return GetTimeSpeedCmd{};
         if (name == kGetSimTime)     return GetSimTimeCmd{};
         if (name == kStepOnce)       return StepOnceCmd{};
-        if (name == kIsPlaybackActive) return IsPlaybackActiveCmd{};
         if (name == kGetFrameRate)     return GetFrameRateCmd{};
 
         // 未知指令

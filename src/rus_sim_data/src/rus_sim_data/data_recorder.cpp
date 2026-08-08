@@ -1,9 +1,9 @@
-#include "components/data_recorder.hpp"
+#include "rus_sim_data/data_recorder.hpp"
 
 #include <cstring>
 #include <cstddef>
 
-namespace RusRobotDriver {
+namespace RusSimData {
 
     // ============================================================
     //  录制
@@ -42,7 +42,7 @@ namespace RusRobotDriver {
         return true;
     }
 
-    void DataRecorder::RecordFrame(const RusRobotDriver::RobotState& state) {
+    void DataRecorder::RecordFrame(const RusUtils::RobotState& state) {
         if (stop_writer_) return;
 
         // 首帧提取关节数（同步取，后续写线程用）
@@ -82,7 +82,7 @@ namespace RusRobotDriver {
             if (stop_writer_ && write_queue_.empty())
                 break;
 
-            RusRobotDriver::RobotState frame = std::move(write_queue_.front());
+            RusUtils::RobotState frame = std::move(write_queue_.front());
             write_queue_.pop_front();
             lock.unlock();  // 释放队列锁，后续文件 I/O 不需要它
 
@@ -101,7 +101,7 @@ namespace RusRobotDriver {
     }
 
     // ---- write_frame — 写入单帧到文件 ----
-    void DataRecorder::write_frame(const RusRobotDriver::RobotState& state) {
+    void DataRecorder::write_frame(const RusUtils::RobotState& state) {
         file_.write(reinterpret_cast<const char*>(&state.timestamp), sizeof(double));
         file_.write(reinterpret_cast<const char*>(state.joint_pos.data()),
                     state.joint_pos.size() * sizeof(double));
@@ -137,7 +137,7 @@ namespace RusRobotDriver {
         frames_.reserve(nf);
 
         for (uint32_t i = 0; i < nf; ++i) {
-            RusRobotDriver::RobotState state;
+            RusUtils::RobotState state;
             state.joint_pos .resize(nj);
             state.joint_vel .resize(nj);
             state.joint_acc .resize(nj);
@@ -159,7 +159,7 @@ namespace RusRobotDriver {
         return true;
     }
 
-    bool DataRecorder::GetFrame(size_t index, RusRobotDriver::RobotState& state) const {
+    bool DataRecorder::GetFrame(size_t index, RusUtils::RobotState& state) const {
         if (index >= frames_.size()) return false;
         state = frames_[index];
         return true;
@@ -172,4 +172,4 @@ namespace RusRobotDriver {
         written_frames_ = 0;
     }
 
-}  // namespace RusRobotDriver
+}  // namespace RusSimData

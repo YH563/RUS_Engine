@@ -13,7 +13,6 @@
 #include <ament_index_cpp/get_package_share_directory.hpp>
 
 #include "robot_driver.hpp"
-#include "components/playback_controller.hpp"
 #include "EAIK/EAIK.h"
 #include "trajectory/trajectory_executor.hpp"
 #include "controller/controller.hpp"
@@ -192,65 +191,6 @@ namespace RusSimRobotDriver {
          */
         void StepOnce();
 
-        // ── 回放接口（基于 PlaybackController） ──
-
-        /**
-         * @brief 开始回放录制的运动数据
-         *
-         * 进入回放模式，跳过控制器的计算，将状态直接写入 MuJoCo 并用
-         * mj_forward 更新运动学，避免动力学积分偏差。
-         *
-         * @param frames 录制帧序列
-         */
-        void StartPlayback(const std::vector<RobotState>& frames);
-
-        /**
-         * @brief 停止回放，恢复正常控制模式
-         */
-        void StopPlayback();
-
-        /** @brief 暂停回放（当前位置暂停） */
-        void PlaybackPause();
-
-        /** @brief 恢复回放 */
-        void PlaybackResume();
-
-        /**
-         * @brief 设置回放速度倍率
-         * @param speed [0.01, 100.0]
-         */
-        void PlaybackSetSpeed(double speed);
-
-        /**
-         * @brief 跳转到指定时间位置（秒）
-         */
-        void PlaybackSeek(double time_seconds);
-
-        /**
-         * @brief 逐帧步进
-         * @param direction 1=前进一帧, -1=后退一帧
-         */
-        void PlaybackStep(int8_t direction);
-
-        /**
-         * @brief 设置循环播放
-         * @param enable 1=循环, 0=不循环
-         */
-        void PlaybackSetLoop(uint8_t enable);
-
-        /**
-         * @brief 获取回放信息
-         * @param[out] info 依次为：
-         *   [current_frame, total_frames, current_time, total_time,
-         *    speed, progress(0~1), playing(0/1)]
-         */
-        void GetPlaybackInfo(std::vector<double>& info) const;
-
-        /**
-         * @brief 是否正在回放
-         */
-        bool IsPlaybackActive() const { return playback_active_; }
-
     private:
         /**
          * @brief 加载 MJCF/URDF，构建 MuJoCo 模型和 EAIK 运动学
@@ -276,11 +216,6 @@ namespace RusSimRobotDriver {
          * @brief 同步层：MuJoCo 内部状态 → RobotState
          */
         void sync_state();
-
-        /**
-         * @brief 回放步进：写入录制的关节状态 → mj_forward 更新运动学
-         */
-        void playback_step();
 
         /**
          * @brief 设置初始关节角
@@ -322,11 +257,6 @@ namespace RusSimRobotDriver {
         std::atomic<bool> is_connected_{false};
         std::atomic<bool> is_enabled_{false};
         double flange_offset_{0.0938};
-
-        // === 回放状态 ===
-        std::atomic<bool> playback_active_{false};
-        std::vector<RobotState> playback_frames_;       ///< 帧数据持有者（PlaybackController 只持有指针）
-        RusRobotDriver::PlaybackController playback_ctrl_;
 
         // === 线程同步 ===
         uint64_t state_version_{0};

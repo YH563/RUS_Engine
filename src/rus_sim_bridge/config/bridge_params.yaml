@@ -1,0 +1,12 @@
+# rus_sim_bridge 参数
+# 启动：ros2 run rus_sim_bridge rus_sim_bridge_node --ros-args --params-file <此文件>
+bridge_node:
+  ros__parameters:
+    # WebSocket 监听端口（被占用时自动 +1 / +2）
+    ws_port: 8765
+    # 状态流数据源 topic
+    state_topic: "/driver/state"
+    # 下游服务调用超时（毫秒），超时回复 failure
+    timeout_ms: 5000
+    # 指令队列出队周期（毫秒）
+    drain_ms: 10

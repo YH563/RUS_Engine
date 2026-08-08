@@ -9,6 +9,4 @@
     robot_ip: ""
 
     # ── 录制 / 回放 / 脚本文件路径 ──
-    record_path:   ""
-    playback_path: ""
     script_path:   ""

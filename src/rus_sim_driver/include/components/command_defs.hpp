@@ -39,19 +39,6 @@ namespace RusRobotDriver {
         inline constexpr std::string_view kGetState      = "get_state";
         inline constexpr std::string_view kIsMotionDone  = "is_motion_done";
 
-        // ── 录制 / 回放 ──
-        inline constexpr std::string_view kRecordStart   = "record_start";
-        inline constexpr std::string_view kRecordStop    = "record_stop";
-        inline constexpr std::string_view kPlaybackStart = "playback_start";
-        inline constexpr std::string_view kPlaybackStop  = "playback_stop";
-        inline constexpr std::string_view kPlaybackPause      = "playback_pause";
-        inline constexpr std::string_view kPlaybackResume     = "playback_resume";
-        inline constexpr std::string_view kPlaybackSetSpeed   = "playback_set_speed";
-        inline constexpr std::string_view kPlaybackSeek       = "playback_seek";
-        inline constexpr std::string_view kPlaybackStep       = "playback_step";
-        inline constexpr std::string_view kPlaybackSetLoop    = "playback_set_loop";
-        inline constexpr std::string_view kPlaybackGetInfo    = "playback_get_info";
-
         // ── 文件执行 ──
         inline constexpr std::string_view kRunFile       = "run_file";
 
@@ -63,7 +50,6 @@ namespace RusRobotDriver {
         inline constexpr std::string_view kGetTimeSpeed    = "get_time_speed";
         inline constexpr std::string_view kGetSimTime      = "get_sim_time";
         inline constexpr std::string_view kStepOnce        = "step_once";
-        inline constexpr std::string_view kIsPlaybackActive = "is_playback_active";
         inline constexpr std::string_view kGetFrameRate     = "get_frame_rate";
 
     }  // namespace Cmd

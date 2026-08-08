@@ -58,6 +58,40 @@ namespace RusSimApp {
             [](const RusUtils::QueryMotionDone&) {
                 return std::vector<DownstreamCmd>{{Module::DRIVER, "is_motion_done", {}}};
             },
+            // 录制 / 回放：路由到数据模块
+            [](const RusUtils::RecordStartCmd&) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "record_start", {}}};
+            },
+            [](const RusUtils::RecordStopCmd&) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "record_stop", {}}};
+            },
+            [](const RusUtils::PlaybackStartCmd&) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_start", {}}};
+            },
+            [](const RusUtils::PlaybackStopCmd&) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_stop", {}}};
+            },
+            [](const RusUtils::PlaybackPauseCmd&) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_pause", {}}};
+            },
+            [](const RusUtils::PlaybackResumeCmd&) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_resume", {}}};
+            },
+            [](const RusUtils::PlaybackSetSpeedCmd& c) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_set_speed", c.args}};
+            },
+            [](const RusUtils::PlaybackSeekCmd& c) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_seek", c.args}};
+            },
+            [](const RusUtils::PlaybackStepCmd& c) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_step", c.args}};
+            },
+            [](const RusUtils::PlaybackSetLoopCmd& c) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_set_loop", c.args}};
+            },
+            [](const RusUtils::PlaybackGetInfoCmd&) {
+                return std::vector<DownstreamCmd>{{Module::DATA, "playback_get_info", {}}};
+            },
         }, cmd);
     }
 

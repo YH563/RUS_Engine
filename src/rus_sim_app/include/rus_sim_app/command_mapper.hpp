@@ -12,6 +12,7 @@ namespace RusSimApp {
         PLANNING,    // 运动规划 / 执行
         DRIVER,      // 驱动
         PERCEPTION,  // 感知（点云建模）
+        DATA,        // 数据（录制 / 回放）
     };
 
     /** 一条下游子指令 */

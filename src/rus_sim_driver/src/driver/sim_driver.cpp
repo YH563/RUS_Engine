@@ -306,12 +306,8 @@ namespace RusSimRobotDriver {
 
             {
                 std::lock_guard<std::recursive_mutex> lock(mtx_);
-                if (playback_active_) {
-                    playback_step();
-                } else {
-                    compute_control();
-                    step_physics();
-                }
+                compute_control();
+                step_physics();
                 sync_state();
                 ++state_version_;
             }
@@ -334,109 +330,6 @@ namespace RusSimRobotDriver {
         }
     }
 
-    // ---- playback_step — 回放单帧 ----
-    void RobotSimDriver::playback_step() {
-        // 计算真实 dt：已过去的实际时间
-        static auto last_playback_time = std::chrono::steady_clock::now();
-        auto now = std::chrono::steady_clock::now();
-        double dt = std::chrono::duration<double>(now - last_playback_time).count();
-        // 限制最大 dt 防止跳跃太大（500ms 上限）
-        if (dt > 0.5) dt = control_cycle_ / sim_speed_.load();
-        last_playback_time = now;
-
-        RobotState out_state;
-        bool frame_changed = false;
-        bool ok = playback_ctrl_.Update(dt, out_state, &frame_changed);
-        if (!ok) {
-            playback_active_ = false;
-            return;
-        }
-
-        // 帧有变化时才写入 MuJoCo（减少 mj_forward 调用）
-        if (frame_changed || !playback_ctrl_.GetInterpolation()) {
-            mju_copy(mj_data_->qpos, out_state.joint_pos.data(), num_dof_);
-            mju_copy(mj_data_->qvel, out_state.joint_vel.data(), num_dof_);
-            mju_zero(mj_data_->qacc, num_dof_);
-            mj_forward(mj_model_.get(), mj_data_.get());
-
-            // 使用回放控制器中的时间戳（可能是插值结果）
-            sim_time_ = out_state.timestamp;
-        }
-
-        // 检查是否播放结束
-        if (!playback_ctrl_.IsPlaying()) {
-            playback_active_ = false;
-        }
-    }
-
-    // ---- StartPlayback — 开始回放 ----
-    void RobotSimDriver::StartPlayback(const std::vector<RobotState>& frames) {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        playback_frames_ = frames;
-        playback_ctrl_.SetFrames(&playback_frames_);
-        playback_ctrl_.Play();
-        playback_active_ = true;
-    }
-
-    // ---- StopPlayback — 停止回放并恢复控制 ----
-    void RobotSimDriver::StopPlayback() {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        playback_active_ = false;
-        playback_ctrl_.Reset();
-        playback_frames_.clear();
-    }
-
-    // ---- PlaybackPause — 暂停 ----
-    void RobotSimDriver::PlaybackPause() {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        playback_ctrl_.Pause();
-    }
-
-    // ---- PlaybackResume — 恢复 ----
-    void RobotSimDriver::PlaybackResume() {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        playback_ctrl_.Play();
-    }
-
-    // ---- PlaybackSetSpeed — 设置速度 ----
-    void RobotSimDriver::PlaybackSetSpeed(double speed) {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        playback_ctrl_.SetSpeed(speed);
-    }
-
-    // ---- PlaybackSeek — 跳转 ----
-    void RobotSimDriver::PlaybackSeek(double time_seconds) {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        playback_ctrl_.SeekToTime(time_seconds);
-    }
-
-    // ---- PlaybackStep — 逐帧步进 ----
-    void RobotSimDriver::PlaybackStep(int8_t direction) {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        if (direction > 0)
-            playback_ctrl_.StepForward();
-        else
-            playback_ctrl_.StepBackward();
-    }
-
-    // ---- PlaybackSetLoop — 循环开关 ----
-    void RobotSimDriver::PlaybackSetLoop(uint8_t enable) {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        playback_ctrl_.SetLoop(enable != 0);
-    }
-
-    // ---- GetPlaybackInfo — 获取回放信息 ----
-    void RobotSimDriver::GetPlaybackInfo(std::vector<double>& info) const {
-        std::lock_guard<std::recursive_mutex> lock(mtx_);
-        info.clear();
-        info.push_back(static_cast<double>(playback_ctrl_.GetCurrentFrame()));
-        info.push_back(static_cast<double>(playback_ctrl_.GetTotalFrames()));
-        info.push_back(playback_ctrl_.GetCurrentTime());
-        info.push_back(playback_ctrl_.GetTotalTime());
-        info.push_back(playback_ctrl_.GetSpeed());
-        info.push_back(playback_ctrl_.GetProgress());
-        info.push_back(playback_active_.load() ? 1.0 : 0.0);
-    }
 
     // ---- StepOnce — 单步调试 ----
     void RobotSimDriver::StepOnce() {

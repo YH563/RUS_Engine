@@ -4,45 +4,45 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "components/types.hpp"
+#include "rus_sim_utils/robot_state.hpp"
 
-namespace RusRobotDriver {
+namespace RusSimData {
 
     /**
-    * @brief 回放控制器——像播放视频一样控制运动数据回放
-    *
-    * 配合 DataRecorder 使用：DataRecorder::LoadRecording() 加载数据后，
-    * 将 frames 指针传给 PlaybackController。
-    *
-    * 支持：
-    *  - 播放 / 暂停
-    *  - 速度调节 (0.01x ~ 100.0x)
-    *  - 按帧 / 按时间 / 按进度跳转
-    *  - 逐帧步进
-    *  - 循环播放
-    *  - 帧间线性插值（平滑回放）
-    *
-    * 典型用法：
-    * @code
-    *   PlaybackController player;
-    *   player.SetFrames(&frames);
-    *   player.Play();
-    *   player.SetSpeed(2.0);
-    *
-    *   while (running) {
-    *       RobotState state;
-    *       player.Update(0.01, state);  // dt = 10ms
-    *       apply(state);
-    *   }
-    * @endcode
-    */
+     * @brief 回放控制器——像播放视频一样控制运动数据回放
+     *
+     * 配合 DataRecorder 使用：DataRecorder::LoadRecording() 加载数据后，
+     * 将 frames 指针传给 PlaybackController。
+     *
+     * 支持：
+     *  - 播放 / 暂停
+     *  - 速度调节 (0.01x ~ 100.0x)
+     *  - 按帧 / 按时间 / 按进度跳转
+     *  - 逐帧步进
+     *  - 循环播放
+     *  - 帧间线性插值（平滑回放）
+     *
+     * 典型用法：
+     * @code
+     *   PlaybackController player;
+     *   player.SetFrames(&frames);
+     *   player.Play();
+     *   player.SetSpeed(2.0);
+     *
+     *   while (running) {
+     *       RobotState state;
+     *       player.Update(0.01, state);  // dt = 10ms
+     *       apply(state);
+     *   }
+     * @endcode
+     */
     class PlaybackController {
     public:
         PlaybackController() = default;
 
         /// ── 数据源 ──
-        void SetFrames(const std::vector<RusRobotDriver::RobotState>* frames);
-        const std::vector<RusRobotDriver::RobotState>* GetFrames() const { return frames_; }
+        void SetFrames(const std::vector<RusUtils::RobotState>* frames);
+        const std::vector<RusUtils::RobotState>* GetFrames() const { return frames_; }
 
         /// ── 播放控制 ──
         void Play();
@@ -87,17 +87,17 @@ namespace RusRobotDriver {
 
         /// ── 主循环更新 ──
         /**
-        * @brief 按时间增量推进播放
-        * @param dt_seconds  距离上次调用的时间增量（秒）
-        * @param[out] out_state 输出的当前帧状态
-        * @param[out] frame_changed 是否切换到了新帧（可选）
-        * @return true 数据有效
-        */
+         * @brief 按时间增量推进播放
+         * @param dt_seconds  距离上次调用的时间增量（秒）
+         * @param[out] out_state 输出的当前帧状态
+         * @param[out] frame_changed 是否切换到了新帧（可选）
+         * @return true 数据有效
+         */
         bool Update(double dt_seconds,
-                    RusRobotDriver::RobotState& out_state,
+                    RusUtils::RobotState& out_state,
                     bool* frame_changed = nullptr);
 
-        bool GetCurrentState(RusRobotDriver::RobotState& state) const;
+        bool GetCurrentState(RusUtils::RobotState& state) const;
 
         /// ── 重置 ──
         void Reset();
@@ -107,17 +107,17 @@ namespace RusRobotDriver {
         std::vector<uint8_t> SerializeFrames() const;
 
         /** 从连续内存块反序列化帧 */
-        static std::vector<RusRobotDriver::RobotState> DeserializeFrames(
+        static std::vector<RusUtils::RobotState> DeserializeFrames(
             const uint8_t* data, size_t size, uint32_t num_joints);
 
     private:
         void sync_frame();
-        static void lerp_state(const RusRobotDriver::RobotState& a,
-                            const RusRobotDriver::RobotState& b,
+        static void lerp_state(const RusUtils::RobotState& a,
+                            const RusUtils::RobotState& b,
                             double t,
-                            RusRobotDriver::RobotState& out);
+                            RusUtils::RobotState& out);
 
-        const std::vector<RusRobotDriver::RobotState>* frames_ = nullptr;
+        const std::vector<RusUtils::RobotState>* frames_ = nullptr;
 
         size_t current_frame_ = 0;
         double playback_time_ = 0.0;
@@ -129,4 +129,4 @@ namespace RusRobotDriver {
         bool interpolate_ = true;
     };
 
-}  // namespace RusRobotDriver
+}  // namespace RusSimData

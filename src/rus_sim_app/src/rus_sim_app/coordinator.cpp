@@ -25,6 +25,7 @@ namespace RusSimApp {
         router_->RegisterModule(Module::DRIVER, "/driver/command");
         router_->RegisterModule(Module::PLANNING, "/planning/command");
         router_->RegisterModule(Module::PERCEPTION, "/perception/command");
+        router_->RegisterModule(Module::DATA, "/data/command");
 
         // TODO: 创建并启动前端 WsServer
     }
