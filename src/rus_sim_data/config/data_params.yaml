@@ -1,5 +1,0 @@
-/**:
-  ros__parameters:
-    # ── 录制 / 回放文件路径 ──
-    record_path:   ""
-    playback_path: ""

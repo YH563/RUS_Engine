@@ -49,9 +49,7 @@ find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rus_sim_interfaces REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(PkgConfig REQUIRED)
 find_package(rus_sim_utils REQUIRED)
-pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 
 # MuJoCo（使用自定义 Find 模块，也支持 MUJOCO_DIR 环境变量）
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -86,9 +84,7 @@ target_link_libraries(driver_core PUBLIC
     mujoco::mujoco
     Eigen3::Eigen
     EAIK
-    ${LIBWEBSOCKETS_LIBRARIES}
 )
-target_include_directories(driver_core PUBLIC ${LIBWEBSOCKETS_INCLUDE_DIRS})
 
 # ========== 4. 直接链接外部的 rus_sim_interfaces 接口包 ==========
 # 消息/服务定义由独立的 rus_sim_interfaces 包提供（src/rus_sim_interfaces），

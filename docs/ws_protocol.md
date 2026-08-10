@@ -1,190 +1,266 @@
-# RUS_Sim 前端通信协议 v0.1（设计稿）
+# RUS_Sim 前端通信协议 v0.2
 
-> 目标：前端（Avalonia）与后端之间**只保留两条单向通路**（前端→后端、后端→前端），
-> 通路上按消息类型细分。指令有回执、事件有推送、数据流可丢帧。
-> 本文档是协议定义，不绑定实现（WS 端口/连接数/内部转发均未定死）。
-
----
-
-## 1. 总体设计
-
-### 1.1 两条单向通路
-
-```
-                    ┌─────────────────────────────┐
-   FE → BE (请求)    │                             │
-  ─────────────────► │         后端(单一入口)       │
-                    │   app Coordinator → 各模块   │
-  ◄───────────────── │                             │
-   BE → FE (推送)    └─────────────────────────────┘
-```
-
-- **通路 A：前端 → 后端（请求）** —— 仅 `command`（统一消息，查询/下发不区分）
-- **通路 B：后端 → 前端（推送）** —— `reply` / `event` / `state`
-
-> **统一原则**：前端所有主动动作一律是 `command`。后端 `dispatch(cmd, args, result)`
-> 本就是统一签名——查询指令只是 `result` 里带数据，操作指令 `result` 为空，
-> 两者在协议层无差别，由前端按 cmd 名解析 result 含义。
-
-### 1.2 消息类型总表
-
-| 类型 | 方向 | 有 id | 有回执 | 语义 |
-|------|------|-------|--------|------|
-| `command` | FE→BE | ✅ | ✅ | 所有前端主动动作（查询/下发统一） |
-| `reply`   | BE→FE | ✅ | — | 对 command 的响应（result 可空） |
-| `event`   | BE→FE | ❌ | — | 异步通知（任务完成/错误/状态变化） |
-| `state`   | BE→FE | ❌ | — | 高频状态流（可丢帧） |
-
-### 1.3 通道分离建议
-
-数据流（`state`）与指令流（`command`/`reply`/`event`）分离，避免队头阻塞。
-WebSocket 同一端口可挂多连接，按路径区分：
-
-| 连接路径 | 承载类型 | 可靠性 |
-|----------|----------|--------|
-| `/ws/control` | command / reply / event | 可靠（id 关联回执） |
-| `/ws/state` | state（关节状态，125Hz 最新值） | 可丢帧 |
-| `/ws/sensor` | 图像 / 点云（预留） | 可丢帧 |
-
-> 单一端口 + 多连接。只有未来需要按端口分流（负载均衡/防火墙）时才考虑独立端口。
+> 目标：前端（Avalonia）与后端之间通过 WebSocket 通信。bridge 为**纯网关**，
+> 只做解析 / 路由 / 转发，不含业务逻辑。本协议是前后端唯一的接口契约，
+> 前端按本协议实现解析器即可，无需关心后端子模块划分。
+>
+> **版本要点**
+> 1. **指令名统一平铺**：不区分高层 / 底层指令，全部是字符串，路由由后端 bridge 决定。
+> 2. **回执统一**：`reply` 与 `event` 同构（`success` / `message` / `result`），
+>    前端用同一个解析器处理；事件用 `ack_id` 关联触发它的指令。
+> 3. **通道分离**：指令流 / 状态流 / 感知流走不同 WebSocket 路径，避免互相阻塞。
+> 4. **数据精度**：所有 double 数值 JSON 输出保留 **6 位小数**。
 
 ---
 
-## 2. 消息格式（JSON）
+## 1. 通道（三个 WebSocket 连接）
 
-### 2.1 通路 A：前端 → 后端（仅 command）
+同一端口（默认 8765），前端按路径建立连接：
+
+| 连接路径 | 承载内容 | 可靠性 | 用途 |
+|----------|----------|--------|------|
+| `/control` | `command` / `reply` / `event` | 可靠（id 关联回执） | 指令收发、事件通知 |
+| `/state` | `state`（关节状态高频流） | 可丢帧（只发最新值） | 状态可视化 |
+| `/sensor` | 感知二进制帧（预留） | 可丢帧 | 点云 / 图像 |
+
+前端至少连 `/control`。`/state`、`/sensor` 按需连接；**未连接的通道不会收到数据**。
+
+---
+
+## 2. 通路 A：前端 → 后端（command）
+
+前端所有主动操作（查询 / 下发）统一为一条 `command` 消息。
 
 ```json
-// 查询（result 会带数据）
-{ "type": "command", "id": 1, "cmd": "is_motion_done", "args": [] }
-// 下发（result 为空）
-{ "type": "command", "id": 2, "cmd": "movej", "args": [0.1,0.2,0.3,0,0,0, 0.5, 0.5] }
+{ "id": 1, "cmd": "is_motion_done", "args": [] }
+{ "id": 2, "cmd": "movej", "args": [0.1, 0.2, 0.3, 0, 0, 0, 0.5] }
 ```
 
-字段：
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `type` | string | `command` |
-| `id` | uint64 | 客户端自增，用于关联 reply |
-| `cmd` | string | 指令名（见 §3 指令清单） |
-| `args` | double[] | 参数数组（可为空） |
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `id` | uint32 | ✅ | 客户端自增，用于关联 reply / event 的 ack_id |
+| `cmd` | string | ✅ | 指令名（见 §4 指令清单） |
+| `args` | double[] | ✅（可空数组） | 参数数组 |
 
-### 2.2 通路 B：后端 → 前端
+说明：
+
+- 后端解析时只读取 `id` / `cmd` / `args` 三个字段，忽略其他字段；
+  前端可自行决定是否带 `"type":"command"`。
+- 每条指令都**必有 reply**（成功或失败）。
+- 参数数量不足 → reply `success=false, message="invalid args for command: <cmd>"`。
+- 未知指令 → reply `success=false, message="unknown command: <cmd>"`。
+- 无参指令若携带非空 args → 同样判定为 invalid args。
+- JSON 无法解析（缺 `cmd` 等）→ reply `success=false, message="malformed command"`，`id=0`。
+
+---
+
+## 3. 通路 B：后端 → 前端
+
+### 3.1 统一回执：reply / event（同构）
+
+两者字段一致，仅语义不同：
+
+- `reply` —— 对 command 的**同步**应答（查询结果 / 校验失败 / 下发结果）
+- `event` —— 子模块的**异步**通知（长任务完成 / 错误），由 bridge 订阅 `/module_events`
+  topic 转发而来
 
 ```json
-// 响应（对应 command 的 id；result 按 cmd 含义解析，可为空）
+// reply：成功 / 失败
 { "type": "reply", "id": 1, "success": true,  "message": "ok", "result": [1.0] }
-{ "type": "reply", "id": 2, "success": false, "message": "unknown command", "result": [] }
+{ "type": "reply", "id": 2, "success": false, "message": "unknown command: xxx", "result": [] }
 
-// 异步事件（无 id）
-{ "type": "event", "event": "scan_done",   "data": { } }
-{ "type": "event", "event": "error",       "data": { "code": 3, "msg": "..." } }
-{ "type": "event", "event": "motion_done", "data": { } }
+// event：异步完成通知（id 固定 0，ack_id 关联原指令）
+{ "type": "event", "id": 0, "ack_id": 3, "event": "pre_scan_done",
+  "success": true, "message": "", "result": [1.0] }
+{ "type": "event", "id": 0, "ack_id": 3, "event": "error",
+  "success": false, "message": "planning: scan failed", "result": [] }
+```
 
-// 高频状态流（无 id，可丢帧）
+| 字段 | 类型 | reply | event | 说明 |
+|------|------|-------|-------|------|
+| `type` | string | ✅ | ✅ | `reply` / `event`（按此分支解析） |
+| `id` | uint32 | ✅ | 固定 `0` | reply 关联 command id；event 恒为 0 |
+| `ack_id` | uint32 | ❌ | ✅ | 触发该事件的 command id（0 = 模块自发，无关联） |
+| `event` | string | ❌ | ✅ | 事件名（见 §5） |
+| `success` | bool | ✅ | ✅ | 是否成功 |
+| `message` | string | ✅ | ✅ | 错误描述 / 附加说明（成功可为空串） |
+| `result` | double[] | ✅ | ✅ | 处理结果（查询类带数据，操作类为空数组） |
+
+**路由语义（重要）**：
+
+- `reply` 只回发给**发起该指令的那条 `/control` 连接**。
+- `event` 广播给**所有已连接的 `/control` 连接**（无论谁触发的）。
+
+**长任务闭环**：前端发 `command(id=3, cmd="pre_scan_start")` →
+后端立即回 `reply(id=3, success=true)` → 子模块完成后 bridge 推
+`event(ack_id=3, event="pre_scan_done", ...)`。前端可用 ack_id 把事件挂回原请求。
+
+**超时**：指令转发到子模块后，默认 **5000ms** 无响应 → bridge 回
+`reply(success=false, message="timeout")`。
+
+### 3.2 状态流：state（/state 通道）
+
+```json
 { "type": "state", "timestamp": 1234.5, "frame_rate": 125.0,
   "joint_pos": [...], "joint_vel": [...], "joint_acc": [...],
   "effort": [...], "flange_pos": [...] }
 ```
 
-字段：
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `type` | string | `reply` / `event` / `state` |
-| `id` | uint64 | 仅 `reply` 有，与请求关联 |
-| `success` / `message` | bool / string | 仅 `reply` |
-| `result` | double[] | 命令返回数据（仅 `reply` 且 success；查询类带数据，操作类为空） |
-| `event` | string | 事件名（仅 `event`） |
-| `data` | object | 事件附带数据（可选） |
-| 状态字段 | double[] | 仅 `state` |
+| `type` | string | 固定 `state` |
+| `timestamp` | double | 驱动侧仿真时间戳（秒） |
+| `frame_rate` | double | 帧率（bridge 按相邻两帧时间差计算） |
+| `joint_pos` / `joint_vel` / `joint_acc` / `effort` | double[] | 6 维关节数组 |
+| `flange_pos` | double[] | 法兰位姿（平移 + 旋转，长度 6） |
+
+- 覆盖式推送：bridge 只保留**最新一帧**，慢客户端丢帧，前端须容忍帧不连续。
+- 数组长度固定为 6（关节 1~6）。
+
+### 3.3 感知流：sensor（/sensor 通道，预留）
+
+感知数据（点云 / 图像）为二进制帧，独立于 JSON 通路。
+
+**帧格式**：`uint32 LE 头长度` + `JSON 头` + `二进制 payload`
+
+```
+┌────────────────┬───────────────────┬─────────────────┐
+│ uint32 LE      │ JSON header       │ binary payload  │
+│ (头字节数)      │ (元数据，UTF-8)    │ (点云/图像裸数据) │
+└────────────────┴───────────────────┴─────────────────┘
+```
+
+JSON 头示例：
+
+```json
+// 点云
+{ "type": "pointcloud", "points": 100000, "fields": ["x","y","z","intensity"],
+  "dtype": "float32", "timestamp": 1234.5, "seq": 1024 }
+// 图像
+{ "type": "image", "width": 1920, "height": 1080, "encoding": "rgb8",
+  "step": 5760, "timestamp": 1234.6, "seq": 1024 }
+```
+
+| 头字段 | 类型 | 适用 | 说明 |
+|--------|------|------|------|
+| `type` | string | 全部 | `pointcloud` / `image` / `compressed`（预留） |
+| `timestamp` | double | 全部 | 时间戳 |
+| `seq` | uint32 | 全部 | 帧序号（前端检测丢帧） |
+| `points` | uint32 | 点云 | 点数 |
+| `fields` | string[] | 点云 | 分量顺序（如 x,y,z,intensity） |
+| `dtype` | string | 点云 | 数值类型（float32 / float64 / uint8 / int32） |
+| `width` / `height` | uint32 | 图像 | 宽高（像素） |
+| `encoding` | string | 图像 | rgb8 / bgr8 / mono8 ... |
+| `step` | uint32 | 图像 | 每行字节数（含 padding） |
+
+> 该通道目前**尚无数据源**，前端可先不实现；实现时按头独立解析，不依赖连续帧。
 
 ---
 
-## 3. 指令清单（三层合并去重）
+## 4. 指令清单（按路由分组）
 
-> 分类规则：
-> - **所有前端主动动作统一为 `command`**，均有 `reply` 回执
-> - 查询类指令：reply 的 `result` 携带数据；操作类指令：`result` 为空
-> - **长任务**：ack 后异步完成 → `command` + 完成 `event`
-> - 底层指令由 app 协调器转发，**前端通常只直接发高层指令**（底层列表保留供调试/高级模式）
->
-> 下表"类型"列已统一为 `command`；`result` 列标注查询类指令的返回值（操作类为空）。
+> 指令名、参数校验、路由目标以后端代码为准（`rus_sim_utils` + bridge 注册表）。
+> 下表按 bridge 当前路由分组，仅用于前端参考。
 
-### 3.1 高层指令（前端主用，经 app 协调器路由）
+### 4.1 本地指令（bridge 直接处理，不下发子模块）
 
-| 指令 | 类型 | args | result | 完成事件 | 路由目标 |
-|------|------|------|--------|----------|----------|
-| `connect` | command | — | — | — | driver |
-| `shutdown` | command | — | — | — | 全系统 |
-| `pre_scan_start` | command | — | — | `pre_scan_done` | planning |
-| `pre_scan_end` | command | — | — | — | planning |
-| `set_start_pose` | command | [x,y,z] | — | — | planning |
-| `set_end_pose` | command | [x,y,z] | — | — | planning |
-| `plan` | command | — | — | `plan_done` | planning |
-| `execute` | command | — | — | `scan_done` | planning |
-| `stop` | command | — | — | — | planning + driver |
-| `pause` | command | — | — | — | planning + driver |
-| `resume` | command | — | — | — | planning + driver |
-| `reset` | command | — | — | — | planning |
-| `query_prescan_done` | command | — | [0/1] | — | planning |
-| `query_motion_done` | command | — | [0/1] | — | driver |
-| `record_start` | command | — | — | — | data |
-| `record_stop` | command | — | — | — | data |
-| `playback_start` | command | — | — | — | data |
-| `playback_stop` | command | — | — | — | data |
-| `playback_pause` | command | — | — | — | data |
-| `playback_resume` | command | — | — | — | data |
-| `playback_set_speed` | command | [speed] | — | — | data |
-| `playback_seek` | command | [time_s] | — | — | data |
-| `playback_step` | command | [direction] | — | — | data |
-| `playback_set_loop` | command | [enable] | — | — | data |
-| `playback_get_info` | command | — | [cur,total,t_cur,t_total,speed,progress,playing] | — | data |
+| 指令名 | args | result | 说明 |
+|--------|------|--------|------|
+| `shutdown` | 无 | 空 | 关闭整个系统。reply 成功后再退出 |
 
-### 3.2 底层指令（驱动，经 app 转发）
+### 4.2 路由到 PLANNING（规划）
 
-| 指令 | 类型 | args | result |
-|------|------|------|--------|
-| `movej` | command | [q1..q6, speed?, acc?] | — |
-| `movel` | command | [x,y,z,rx,ry,rz, speed?, acc?] | — |
-| `servoj` | command | [q1..q6] | — |
-| `servo_cart` | command | [x,y,z,rx,ry,rz] | — |
-| `start_jog` | command | [ref, axis, dir, speed%, acc%, max_dis?] | — |
-| `stop_jog_decel` | command | — | — |
-| `stop_jog_immediate` | command | — | — |
-| `servo_start` / `servo_end` | command | — | — |
-| `stop` / `pause` / `resume` | command | — | — |
-| `connect` / `disconnect` | command | — | — |
-| `is_connected` | command | — | [0/1] |
-| `is_in_drag_teach` | command | — | [0/1] |
-| `robot_enable` | command | [state] | — |
-| `get_state` | command | [flag] | [timestamp, q1..q6] |
-| `is_motion_done` | command | — | [0/1] |
-| `run_file` | command | (path 由后端参数配置) | — |
-| `switch_driver` | command | [type, ip1..ip4] | — |
-| `set_time_speed` | command | [speed] | — |
-| `get_time_speed` | command | — | [speed] |
-| `get_sim_time` | command | — | [t] |
-| `step_once` | command | — | — |
-| `get_frame_rate` | command | — | [hz] |
+| 指令名 | args | result | 说明 |
+|--------|------|--------|------|
+| `pre_scan_start` | 无 | 空 | 预扫查开始（完成后有 `pre_scan_done` 事件） |
+| `pre_scan_end` | 无 | 空 | 预扫查结束 |
+| `set_start_pose` | [x, y, z] | 空 | 设置起点（≥3 个参数） |
+| `set_end_pose` | [x, y, z] | 空 | 设置终点（≥3 个参数） |
+| `plan` | 无 | 空 | 开始规划（完成后有 `plan_done` 事件） |
+| `execute` | 无 | 空 | 开始执行（完成后有 `scan_done` 事件） |
+| `query_prescan_done` | 无 | [0/1] | 查询预扫查是否完成 |
 
-### 3.3 事件清单（后端 → 前端，通路 B）
+### 4.3 路由到 DRIVER（驱动）
 
-| 事件 | 触发 |
-|------|------|
-| `pre_scan_done` | 预扫查完成 |
-| `plan_done` | 轨迹规划完成 |
-| `scan_done` | 正式扫查完成 |
-| `motion_done` | 当前运动完成 |
-| `error` | 模块错误（带 code + msg） |
-| `recording_started` / `recording_stopped` | 录制状态变化 |
-| `playback_started` / `playback_stopped` | 回放状态变化 |
+| 指令名 | args | result | 说明 |
+|--------|------|--------|------|
+| `connect` | 无 | 空 | 连接机器人 |
+| `disconnect` | 无 | 空 | 断开连接 |
+| `is_connected` | 无 | [0/1] | 是否已连接 |
+| `is_in_drag_teach` | 无 | [0/1] | 是否拖拽示教中 |
+| `robot_enable` | [state] | 空 | 使能（1）/ 去使能（0） |
+| `get_state` | 无 | [timestamp, q1..q6] | 获取当前关节状态 |
+| `is_motion_done` | 无 | [0/1] | 运动是否完成 |
+| `switch_driver` | [type, ip1, ip2, ip3, ip4] | 空 | 切换 sim(0) / real(1)，IP 四个十进制段 |
+| `movej` | [q1..q6, speed?, acc?] | 空 | 关节运动（≥6 个参数） |
+| `movel` | [x,y,z,rx,ry,rz, speed?, acc?] | 空 | 笛卡尔直线运动（≥6 个参数） |
+| `servoj` | [q1..q6] | 空 | 关节伺服（≥6 个参数） |
+| `servo_cart` | [x,y,z,rx,ry,rz] | 空 | 笛卡尔伺服（≥6 个参数） |
+| `start_jog` | [ref, axis, dir, speed%, acc%, max_dis?] | 空 | 开始点动（≥5 个参数） |
+| `stop_jog_decel` | 无 | 空 | 点动减速停止 |
+| `stop_jog_immediate` | 无 | 空 | 点动立即停止 |
+| `servo_start` | 无 | 空 | 伺服模式开始 |
+| `servo_end` | 无 | 空 | 伺服模式结束 |
+| `run_file` | 无 | 空 | 执行指令文件（路径由后端参数配置） |
+| `set_time_speed` | [speed] | 空 | 设置仿真时间倍速 |
+| `get_time_speed` | 无 | [speed] | 查询倍速 |
+| `get_sim_time` | 无 | [t] | 查询仿真时间 |
+| `step_once` | 无 | 空 | 单步仿真 |
+| `get_frame_rate` | 无 | [hz] | 查询帧率 |
+
+### 4.4 扇出指令（同时路由到 PLANNING + DRIVER）
+
+多目标指令：bridge 并发转发给所有目标，**全部成功才返回 success**，
+`result` 按目标顺序拼接；任一失败则 `message` 为首个失败信息。
+
+| 指令名 | args | result |
+|--------|------|--------|
+| `stop` | 无 | 空 |
+| `pause` | 无 | 空 |
+| `resume` | 无 | 空 |
+| `reset` | 无 | 空 |
+| `query_motion_done` | 无 | [0/1] |
+
+### 4.5 PERCEPTION 指令
+
+通道 / 注册已预留，指令待后续设计，暂不定义。感知大块数据（点云 / 图像）
+始终走 `/sensor` 二进制通道，不通过 command 传输。
 
 ---
 
-## 4. 待定 / 开放问题
+## 5. 事件清单
 
-1. **前端是否直接发底层指令**：协议支持，但建议默认只暴露高层指令，底层指令仅在"高级模式/调试"下开放。
-2. **长任务的进度**：扫查进行中是否需要周期性进度事件（如 `scan_progress`）？当前只有完成事件。
-3. **图像/点云通道**：预留 `/ws/sensor`，但格式（base64 / 二进制帧）未定，建议后续数据量大时走二进制分帧。
-4. **错误码表**：`event.error` 的 `code` 需要统一编号，待模块实现时补充。
-5. **当前现状与目标的差距**：app 协调器 WsServer 尚未实现；driver(8765)/data(8766) WS 为现有实现，需统一到本协议。
+| 事件名 | 触发时机 | 关联指令 | result |
+|--------|----------|----------|--------|
+| `pre_scan_done` | 预扫查完成 | `pre_scan_start` | 可空 |
+| `plan_done` | 轨迹规划完成 | `plan` | 可空 |
+| `scan_done` | 正式扫查完成 | `execute` | 可空 |
+| `motion_done` | 当前运动完成 | 任意运动指令 | 可空 |
+| `error` | 模块错误 | 可空 | 空 |
+
+---
+
+## 6. 前端实现要点（Avalonia）
+
+1. **三个连接**：`/control`（必连）、`/state`（状态可视化）、`/sensor`（预留）。
+2. **两个解析器**：
+   - JSON 解析器：读 `type` 字段分流 → `reply` / `event`（同构，可复用字段绑定）/
+     `state`；
+   - 二进制解析器（sensor 预留）。
+3. **reply 与 event 同构**：建议建模为一个类（`type` / `id` / `ack_id` / `event` /
+   `success` / `message` / `result`），reply 时 `event` 字段为空，event 时 `id` 为 0。
+4. **请求追踪**：`id` 自增；reply 按 `id` 匹配；event 按 `ack_id` 挂回原请求。
+5. **丢帧容忍**：`/state` 只保留最新值，不要依赖连续性。
+6. **数值精度**：result 内所有 double 为 6 位小数字符串，解析成 double 即可。
+
+---
+
+## 7. 代码对照
+
+| 关注点 | 头文件 |
+|--------|--------|
+| 通道路径 / 指令名 / 事件名 / 传感器类型常量 | `rus_sim_utils/command_defs.hpp` |
+| 消息结构体 / JSON 编解码 / 传感器帧 | `rus_sim_utils/protocol.hpp` |
+| 指令结构体与参数校验 | `rus_sim_utils/command_types.hpp` |
+| 指令 → 模块路由配置 | `rus_sim_utils/command_registry.hpp` + bridge `command_dispatcher.cpp` |
+| bridge 实际路由表 | `rus_sim_bridge/src/command_dispatcher.cpp` `init_routing()` |

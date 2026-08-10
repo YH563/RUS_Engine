@@ -42,23 +42,6 @@ namespace RusDriverNode {
             std::chrono::milliseconds(8),
             std::bind(&DriverNode::publish_state, this));
 
-        // ── WebSocket 监控服务器 ──
-        ws_server_.Start(8765,
-            [this](const std::string& cmd,
-                   const std::vector<double>& args,
-                   std::vector<double>& result) {
-                return dispatch(cmd, args, result);
-            },
-            [this](int level, const std::string& msg) {
-                switch (level) {
-                    case 0:  RCLCPP_INFO(get_logger(), "%s", msg.c_str()); break;
-                    case 1:  RCLCPP_WARN(get_logger(), "%s", msg.c_str()); break;
-                    case 2:  RCLCPP_ERROR(get_logger(), "%s", msg.c_str()); break;
-                }
-            }
-        );
-        RCLCPP_INFO(get_logger(), "WebSocket 监控已启动 ws://localhost:8765");
-
         RCLCPP_INFO(get_logger(), "DriverNode 启动完成");
     }
 
@@ -66,9 +49,7 @@ namespace RusDriverNode {
         return static_cast<RusSimRobotDriver::RobotSimDriver&>(*driver_);
     }
 
-    DriverNode::~DriverNode() {
-        ws_server_.Stop();
-    }
+    DriverNode::~DriverNode() = default;
 
     // ============================================================
     //  handle_command — /driver/command 服务回调
@@ -121,33 +102,6 @@ namespace RusDriverNode {
         js->velocity = to_vec(state.joint_vel);
         js->effort   = to_vec(state.effort);
         joint_state_pub_->publish(std::move(js));
-
-        // ── WebSocket 广播 ──
-        ws_server_.Broadcast(state_to_json(state));
-    }
-
-    // ============================================================
-    //  state_to_json — RobotState → JSON（用于 WS 推送）
-    // ============================================================
-    std::string DriverNode::state_to_json(const RusRobotDriver::RobotState& state) {
-        auto to_json_arr = [](const auto& vec) -> std::string {
-            std::string s;
-            for (int i = 0; i < vec.size(); ++i) {
-                if (i) s += ",";
-                s += std::to_string(vec(i));
-            }
-            return "[" + s + "]";
-        };
-
-        double frame_rate = is_sim_ ? sim_driver().GetFrameRate() : 125.0;
-
-        return R"({"timestamp":)" + std::to_string(state.timestamp) +
-               R"(,"frame_rate":)" + std::to_string(frame_rate) + 
-               R"(,"joint_pos":)" + to_json_arr(state.joint_pos) +
-               R"(,"joint_vel":)" + to_json_arr(state.joint_vel) +
-               R"(,"joint_acc":)" + to_json_arr(state.joint_acc) +
-               R"(,"effort":)" + to_json_arr(state.effort) +
-               R"(,"flange_pos":)" + to_json_arr(state.flange_pos) + "}";
     }
 
     // ============================================================

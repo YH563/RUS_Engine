@@ -6,6 +6,9 @@
 
 namespace rus_sim_bridge {
 
+    using Channel = RusUtils::Channel;
+    using RusUtils::channel_path;
+
     // ────────────────────────────────────────────────────────────────
     //  每会话用户数据
     // ────────────────────────────────────────────────────────────────
@@ -63,7 +66,7 @@ namespace rus_sim_bridge {
                 info.gid = -1;
                 info.uid = -1;
 
-                context_ = lws_create_context(&info);
+                context_.reset(lws_create_context(&info));
                 if (context_) {
                     port_ = p;
                     log_msg(0, "已启动 ws://0.0.0.0:" + std::to_string(p) +
@@ -80,12 +83,11 @@ namespace rus_sim_bridge {
             }
 
             while (running_.load() && context_) {
-                lws_service(context_, 50);
+                lws_service(context_.get(), 50);
                 flush_scheduled();
             }
 
-            lws_context_destroy(context_);
-            context_ = nullptr;
+            context_.reset();
             running_.store(false);
         });
 
@@ -98,10 +100,7 @@ namespace rus_sim_bridge {
     void WsServer::Stop() {
         running_.store(false);
         if (thread_.joinable()) thread_.join();
-        if (context_) {
-            lws_context_destroy(context_);
-            context_ = nullptr;
-        }
+        context_.reset();
     }
 
     void WsServer::BroadcastState(const std::string& json) {
@@ -110,7 +109,7 @@ namespace rus_sim_bridge {
             std::lock_guard lock(state_mutex_);
             last_state_json_ = json;  // 覆盖式，只保留最新
         }
-        if (context_) lws_cancel_service(context_);  // 唤醒事件循环
+        if (context_) lws_cancel_service(context_.get());  // 唤醒事件循环
     }
 
     void WsServer::BroadcastEvent(const std::string& json) {
@@ -122,7 +121,7 @@ namespace rus_sim_bridge {
                     pending_replies_[info.id].push_back(json);
             }
         }
-        if (context_) lws_cancel_service(context_);
+        if (context_) lws_cancel_service(context_.get());
     }
 
     // ================================================================
@@ -134,7 +133,7 @@ namespace rus_sim_bridge {
         auto it = sessions_by_id_.find(session_id);
         if (it == sessions_by_id_.end()) return;  // 会话已关闭，丢弃
         pending_replies_[session_id].push_back(json);
-        if (context_) lws_cancel_service(context_);
+        if (context_) lws_cancel_service(context_.get());
     }
 
     void WsServer::flush_scheduled() {
@@ -217,7 +216,7 @@ namespace rus_sim_bridge {
             session->command_buf.append(static_cast<const char*>(in), len);
             // 一条完整 JSON 以 '}' 收尾
             if (!session->command_buf.empty() && session->command_buf.back() == '}') {
-                CommandMessage cmd;
+                RusUtils::CommandMessage cmd;
                 std::string json = session->command_buf;
                 session->command_buf.clear();
 
@@ -228,17 +227,16 @@ namespace rus_sim_bridge {
                     if (it != server->sessions_.end()) session_id = it->second.id;
                 }
 
-                if (parse_command(json, cmd) && server->handler_) {
+                if (RusUtils::ParseCommandMessage(json, cmd) && server->handler_) {
                     // reply 关联到本会话
                     auto reply = [server, session_id](const std::string& reply_json) {
                         server->enqueue_session(session_id, reply_json);
                     };
                     server->handler_(cmd, std::move(reply));
                 } else if (server->handler_) {
-                    ReplyMessage fail;
-                    fail.success = false;
-                    fail.message = "malformed command";
-                    server->enqueue_session(session_id, serialize_reply(fail));
+                    server->enqueue_session(session_id,
+                        RusUtils::SerializeResult(
+                            RusUtils::ResultMessage::MakeReply(0, false, "malformed command")));
                 }
             }
             break;

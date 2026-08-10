@@ -16,6 +16,7 @@ find_package(sensor_msgs REQUIRED)
 # 列出所有接口文件
 set(msg_files
   "msg/RobotState.msg"
+  "msg/ModuleEvent.msg"
 )
 set(srv_files
   "srv/CommandService.srv"

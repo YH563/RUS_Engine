@@ -11,7 +11,7 @@
 
 #include <libwebsockets.h>
 
-#include "rus_sim_bridge/protocol.hpp"
+#include <rus_sim_utils/protocol.hpp>
 
 namespace rus_sim_bridge {
 
@@ -34,7 +34,7 @@ namespace rus_sim_bridge {
         using ReplyFn = std::function<void(const std::string& json)>;
 
         /// 指令处理器：收到 command 后回调，自行决定何时调用 reply(json)
-        using CommandHandler = std::function<void(const CommandMessage& cmd, ReplyFn reply)>;
+        using CommandHandler = std::function<void(const RusUtils::CommandMessage& cmd, ReplyFn reply)>;
 
         /// 日志回调(level, msg)：0=info 1=warn 2=error
         using LogFn = std::function<void(int level, const std::string& msg)>;
@@ -72,7 +72,7 @@ namespace rus_sim_bridge {
         // 内部：会话登记表 + 待推送队列（用会话 id 而非裸指针，规避 wsi 生命周期竞态）
         struct SessionInfo {
             uint64_t id = 0;
-            Channel channel = Channel::Control;
+            RusUtils::Channel channel = RusUtils::Channel::Control;
         };
 
         void enqueue_session(uint64_t session_id, const std::string& json);
@@ -80,7 +80,8 @@ namespace rus_sim_bridge {
 
         std::atomic<bool> running_{false};
         std::thread thread_;
-        lws_context* context_{nullptr};
+        // libwebsockets C 句柄：RAII 包装，离开作用域自动 lws_context_destroy
+        std::unique_ptr<lws_context, void (*)(lws_context*)> context_{nullptr, lws_context_destroy};
         int port_{8765};
         CommandHandler handler_;
         LogFn log_;

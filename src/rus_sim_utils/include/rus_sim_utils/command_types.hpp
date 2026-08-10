@@ -1,0 +1,323 @@
+#pragma once
+
+// ════════════════════════════════════════════════════════════════════
+//  指令定义（结构体绑定）
+//  ────────────────────────────────────────────────────────────────────
+//  指令 = 结构体，静态声明 kName（引用 command_defs.hpp 常量）。
+//  结构体只承载指令名 + 参数，不含任何路由 / 模块信息 / 层级划分。
+//  "指令名 → 目标模块" 的对应关系由 bridge 侧 CommandRegistry 注册，
+//  与指令定义解耦。
+//  依赖：command_defs.hpp
+// ════════════════════════════════════════════════════════════════════
+
+#include <array>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include "rus_sim_utils/command_defs.hpp"
+
+namespace RusUtils {
+
+    namespace Cmd {
+
+        struct Connect {
+            static constexpr std::string_view kName = CmdName::kConnect;
+        };
+
+        /// 关闭系统（bridge 本地处理：注册表空模块列表）
+        struct Shutdown {
+            static constexpr std::string_view kName = CmdName::kShutdown;
+        };
+
+        struct PreScanStart {
+            static constexpr std::string_view kName = CmdName::kPreScanStart;
+        };
+
+        struct PreScanEnd {
+            static constexpr std::string_view kName = CmdName::kPreScanEnd;
+        };
+
+        struct SetStartPose {
+            static constexpr std::string_view kName = CmdName::kSetStartPose;
+            std::vector<double> pose;                     // [x,y,z]
+            static bool ParseArgs(const std::vector<double>& a, SetStartPose& o) {
+                if (a.size() < 3) return false;
+                o.pose = a;
+                return true;
+            }
+        };
+
+        struct SetEndPose {
+            static constexpr std::string_view kName = CmdName::kSetEndPose;
+            std::vector<double> pose;                     // [x,y,z]
+            static bool ParseArgs(const std::vector<double>& a, SetEndPose& o) {
+                if (a.size() < 3) return false;
+                o.pose = a;
+                return true;
+            }
+        };
+
+        struct Plan {
+            static constexpr std::string_view kName = CmdName::kPlan;
+        };
+
+        struct Execute {
+            static constexpr std::string_view kName = CmdName::kExecute;
+        };
+
+        struct Stop {
+            static constexpr std::string_view kName = CmdName::kStop;
+        };
+
+        struct Pause {
+            static constexpr std::string_view kName = CmdName::kPause;
+        };
+
+        struct Resume {
+            static constexpr std::string_view kName = CmdName::kResume;
+        };
+
+        struct Reset {
+            static constexpr std::string_view kName = CmdName::kReset;
+        };
+
+        struct QueryPreScanDone {
+            static constexpr std::string_view kName = CmdName::kQueryPreScanDone;
+        };
+
+        struct QueryMotionDone {
+            static constexpr std::string_view kName = CmdName::kQueryMotionDone;
+        };
+
+        struct MoveJ {
+            static constexpr std::string_view kName = CmdName::kMoveJ;
+            std::vector<double> q;                        // [q1..q6, speed?, acc?]
+            static bool ParseArgs(const std::vector<double>& a, MoveJ& o) {
+                if (a.size() < 6) return false;
+                o.q = a;
+                return true;
+            }
+        };
+
+        struct MoveL {
+            static constexpr std::string_view kName = CmdName::kMoveL;
+            std::vector<double> pose;                     // [x,y,z,rx,ry,rz]
+            static bool ParseArgs(const std::vector<double>& a, MoveL& o) {
+                if (a.size() < 6) return false;
+                o.pose = a;
+                return true;
+            }
+        };
+
+        struct ServoJ {
+            static constexpr std::string_view kName = CmdName::kServoJ;
+            std::vector<double> q;                        // [q1..q6]
+            static bool ParseArgs(const std::vector<double>& a, ServoJ& o) {
+                if (a.size() < 6) return false;
+                o.q = a;
+                return true;
+            }
+        };
+
+        struct ServoCart {
+            static constexpr std::string_view kName = CmdName::kServoCart;
+            std::vector<double> pose;                     // [x,y,z,rx,ry,rz]
+            static bool ParseArgs(const std::vector<double>& a, ServoCart& o) {
+                if (a.size() < 6) return false;
+                o.pose = a;
+                return true;
+            }
+        };
+
+        struct StartJog {
+            static constexpr std::string_view kName = CmdName::kStartJog;
+            std::vector<double> params;                   // [ref, axis, dir, speed%, acc%, max_dis?]
+            static bool ParseArgs(const std::vector<double>& a, StartJog& o) {
+                if (a.size() < 5) return false;
+                o.params = a;
+                return true;
+            }
+        };
+
+        struct StopJogDecel {
+            static constexpr std::string_view kName = CmdName::kStopJogDecel;
+        };
+
+        struct StopJogImmediate {
+            static constexpr std::string_view kName = CmdName::kStopJogImmediate;
+        };
+
+        struct ServoStart {
+            static constexpr std::string_view kName = CmdName::kServoStart;
+        };
+
+        struct ServoEnd {
+            static constexpr std::string_view kName = CmdName::kServoEnd;
+        };
+
+        struct Disconnect {
+            static constexpr std::string_view kName = CmdName::kDisconnect;
+        };
+
+        struct IsConnected {
+            static constexpr std::string_view kName = CmdName::kIsConnected;
+        };
+
+        struct IsInDragTeach {
+            static constexpr std::string_view kName = CmdName::kIsInDragTeach;
+        };
+
+        struct RobotEnable {
+            static constexpr std::string_view kName = CmdName::kRobotEnable;
+            std::vector<double> state;                    // [state]
+            static bool ParseArgs(const std::vector<double>& a, RobotEnable& o) {
+                if (a.size() < 1) return false;
+                o.state = a;
+                return true;
+            }
+        };
+
+        struct GetState {
+            static constexpr std::string_view kName = CmdName::kGetState;
+        };
+
+        struct IsMotionDone {
+            static constexpr std::string_view kName = CmdName::kIsMotionDone;
+        };
+
+        struct RunFile {
+            static constexpr std::string_view kName = CmdName::kRunFile;
+        };
+
+        struct SwitchDriver {
+            static constexpr std::string_view kName = CmdName::kSwitchDriver;
+            std::vector<double> params;                   // [type, ip1..ip4]
+            static bool ParseArgs(const std::vector<double>& a, SwitchDriver& o) {
+                if (a.size() < 1) return false;
+                o.params = a;
+                return true;
+            }
+        };
+
+        struct SetTimeSpeed {
+            static constexpr std::string_view kName = CmdName::kSetTimeSpeed;
+            std::vector<double> speed;                    // [speed]
+            static bool ParseArgs(const std::vector<double>& a, SetTimeSpeed& o) {
+                if (a.size() < 1) return false;
+                o.speed = a;
+                return true;
+            }
+        };
+
+        struct GetTimeSpeed {
+            static constexpr std::string_view kName = CmdName::kGetTimeSpeed;
+        };
+
+        struct GetSimTime {
+            static constexpr std::string_view kName = CmdName::kGetSimTime;
+        };
+
+        struct StepOnce {
+            static constexpr std::string_view kName = CmdName::kStepOnce;
+        };
+
+        struct GetFrameRate {
+            static constexpr std::string_view kName = CmdName::kGetFrameRate;
+        };
+
+        // ════════════════════════════════════════════════════════════
+        //  指令类型清单（唯一真源：所有指令类型的并集）
+        //  查找表由本清单编译期自动展开生成，加新指令只改这里。
+        // ════════════════════════════════════════════════════════════
+
+        using CommandVariant = std::variant<
+            Connect, Shutdown, PreScanStart, PreScanEnd,
+            SetStartPose, SetEndPose, Plan, Execute,
+            Stop, Pause, Resume, Reset,
+            QueryPreScanDone, QueryMotionDone,
+            MoveJ, MoveL, ServoJ, ServoCart, StartJog,
+            StopJogDecel, StopJogImmediate, ServoStart, ServoEnd,
+            Disconnect, IsConnected, IsInDragTeach, RobotEnable,
+            GetState, IsMotionDone, RunFile, SwitchDriver,
+            SetTimeSpeed, GetTimeSpeed, GetSimTime, StepOnce, GetFrameRate>;
+
+        // ────────────────────────────────────────────────────────────
+        //  解析：指令名 + args → 类型化结构体
+        // ────────────────────────────────────────────────────────────
+
+        namespace detail {
+
+            struct Entry {
+                std::string_view name;
+                bool (*parse)(const std::vector<double>&, CommandVariant&);
+            };
+
+            // 检测结构体是否声明了 ParseArgs(args, out) → bool
+            template <typename T, typename = void>
+            struct has_parse_args : std::false_type {};
+            template <typename T>
+            struct has_parse_args<T, std::void_t<decltype(
+                T::ParseArgs(std::declval<const std::vector<double>&>(),
+                             std::declval<T&>()))>> : std::true_type {};
+
+            // 统一解析入口：构造结构体实例 → 写入 variant
+            template <typename T>
+            bool parse_into(const std::vector<double>& args, CommandVariant& out) {
+                T value;
+                if constexpr (has_parse_args<T>::value) {
+                    if (!T::ParseArgs(args, value)) return false;
+                } else {
+                    if (!args.empty()) return false;  // 无参指令不接受参数
+                }
+                out = std::move(value);
+                return true;
+            }
+
+            // 从结构体类型生成表项（自动提取 kName + 解析函数）
+            template <typename T>
+            constexpr Entry make_entry() {
+                return {T::kName, &parse_into<T>};
+            }
+
+            // 编译期根据 CommandVariant 的类型清单逐项生成查找表。
+            // 表由 variant 自动展开而来，二者不可能不一致——加新指令
+            // 只需在 CommandVariant 中登记，无需（也无法）单独维护表。
+            template <typename Variant, std::size_t... I>
+            constexpr std::array<Entry, sizeof...(I)> build_table(std::index_sequence<I...>) {
+                return {{ make_entry<std::variant_alternative_t<I, Variant>>()... }};
+            }
+
+            inline constexpr auto CommandTable = build_table<CommandVariant>(
+                std::make_index_sequence<std::variant_size_v<CommandVariant>>{});
+
+        }  // namespace detail
+
+        /// 解析指令名 + 参数为类型化结构体。
+        /// @return nullopt = 未知指令或参数非法（错误描述写入 err）
+        inline std::optional<CommandVariant> ParseCommand(
+            const std::string& name, const std::vector<double>& args,
+            std::string& err) {
+            for (const auto& e : detail::CommandTable) {
+                if (e.name != name) continue;
+                CommandVariant out;
+                if (e.parse(args, out)) return out;
+                err = "invalid args for command: " + name;
+                return std::nullopt;
+            }
+            err = "unknown command: " + name;
+            return std::nullopt;
+        }
+
+        /// 指令名访问器（std::visit 返回统一类型）
+        inline std::string_view NameOf(const CommandVariant& v) {
+            return std::visit([](const auto& c) { return c.kName; }, v);
+        }
+
+    }  // namespace Cmd
+
+}  // namespace RusUtils

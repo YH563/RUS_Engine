@@ -9,7 +9,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)
 find_package(rus_sim_interfaces REQUIRED)
+find_package(rus_sim_utils REQUIRED)
 
 # libwebsockets（系统库）
 find_library(WEBSOCKETS_LIB websockets REQUIRED)
@@ -22,7 +24,7 @@ target_include_directories(bridge_core PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
-ament_target_dependencies(bridge_core PUBLIC rclcpp sensor_msgs rus_sim_interfaces)
+ament_target_dependencies(bridge_core PUBLIC rclcpp sensor_msgs rus_sim_interfaces rus_sim_utils)
 target_link_libraries(bridge_core PUBLIC ${WEBSOCKETS_LIB})
 
 # ── 可执行节点 ──
@@ -36,7 +38,7 @@ install(TARGETS bridge_core
   ARCHIVE DESTINATION lib
 )
 install(TARGETS rus_sim_bridge_node DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY launch DESTINATION share/${PROJECT_NAME}/launch)
-install(DIRECTORY config DESTINATION share/${PROJECT_NAME}/config)
+install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch)
+install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 
 ament_package()

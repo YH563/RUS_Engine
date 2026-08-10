@@ -1,3 +1,4 @@
+uint32 client_id   # 关联的前端 command id（bridge 透传；0=无），用于事件回关联 ack_id
 string command
 float64[] args
 ---

@@ -12,19 +12,19 @@
 
 #include "components/command_defs.hpp"
 #include "driver/robot_driver.hpp"
-#include "rus_sim_utils/ws_server.hpp"
 #include "driver/sim_driver.hpp"
 
 namespace RusSimRobotDriver { class RobotSimDriver; }
 
 namespace RusDriverNode {
-    using RusUtils::WsServer;
-
     /**
      * @brief ROS2 驱动节点
      *
-     * Service /driver/command — 统一指令接口
-     * Topic  /driver/state    — 100Hz 发布 RobotState
+     * Service /driver/command — 统一指令接口（由桥接层 CommandDispatcher 调用）
+     * Topic  /driver/state    — 125Hz 发布 RobotState（桥接层订阅并转发到 WS /state）
+     * Topic  /joint_states    — 发布 JointState（供 RViz 仿真可视化）
+     *
+     * 不持有 WebSocket 服务器：前后端通信统一走 rus_sim_bridge（纯网关）。
      */
     class DriverNode : public rclcpp::Node {
     public:
@@ -72,12 +72,6 @@ namespace RusDriverNode {
 
         // 关节名称（用于 /joint_states）
         std::vector<std::string> joint_names_;
-
-        // WebSocket 监控服务器
-        WsServer ws_server_;
-
-        // 序列化 RobotState → JSON（用于 WS 广播）
-        std::string state_to_json(const RusRobotDriver::RobotState& state);
     };
 
 }  // namespace RusDriverNode
