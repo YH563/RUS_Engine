@@ -4,3 +4,6 @@ install/
 log/
 .VSCodeCounter/
 .idea/
+.vscode/
+__pycache__/
+*.pyc

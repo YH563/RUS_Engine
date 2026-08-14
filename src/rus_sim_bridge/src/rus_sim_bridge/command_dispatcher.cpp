@@ -59,15 +59,17 @@ namespace rus_sim_bridge {
         registry_.Register(CmdName::kStepOnce,         {Module::DRIVER});
         registry_.Register(CmdName::kGetFrameRate,     {Module::DRIVER});
 
-        // ── 扇出：planning + driver 都要收到 ──
+        // ── 业务 / 状态指令（默认自动模式：planning 持有动作状态；set_mode 可切手动直控 driver）──
+        // stop = 急停：安全关键，必须直接到达 driver；自动模式同时扇出 planning 停伺服循环。
         registry_.Register(CmdName::kStop,            {Module::PLANNING, Module::DRIVER});
-        registry_.Register(CmdName::kPause,           {Module::PLANNING, Module::DRIVER});
-        registry_.Register(CmdName::kResume,          {Module::PLANNING, Module::DRIVER});
-        registry_.Register(CmdName::kReset,           {Module::PLANNING, Module::DRIVER});
-        registry_.Register(CmdName::kQueryMotionDone, {Module::PLANNING, Module::DRIVER});
+        registry_.Register(CmdName::kPause,           {Module::PLANNING});
+        registry_.Register(CmdName::kResume,          {Module::PLANNING});
+        registry_.Register(CmdName::kReset,           {Module::PLANNING});
+        registry_.Register(CmdName::kQueryMotionDone, {Module::PLANNING});
 
         // ── 本地处理（不转发下游） ──
         registry_.Register(CmdName::kShutdown, {});
+        registry_.Register(CmdName::kSetMode, {});   // 模式切换：0=手动, 1=自动（修改上述扇出目标）
     }
 
     // ================================================================
@@ -124,7 +126,71 @@ namespace rus_sim_bridge {
             return;
         }
 
+        if (cmd.cmd == CmdName::kSetMode) {
+            // 0=手动（直控 driver），1=自动（planning 协调，默认）
+            bool auto_mode = cmd.args.empty() ? true : (static_cast<int>(cmd.args[0]) != 0);
+            apply_mode(auto_mode);
+            // 切到手动时通知 planning 停止残留扫描（避免自动任务悬挂）
+            if (!auto_mode) {
+                send_raw_to_module(RusUtils::Module::PLANNING, std::string(CmdName::kStop), {});
+            }
+            reply(SerializeResult(ResultMessage::MakeReply(cmd.id, true,
+                auto_mode ? "mode: auto" : "mode: manual")));
+            return;
+        }
+
         reply(SerializeResult(ResultMessage::MakeReply(cmd.id, true, "ok")));
+    }
+
+    // ================================================================
+    //  模式切换：修改模式相关指令的扇出目标
+    // ================================================================
+
+    void CommandDispatcher::apply_mode(bool auto_mode) {
+        using namespace RusUtils;
+
+        if (auto_mode) {
+            // 自动：planning 持有动作状态，暂停/恢复/复位/查询走 planning；急停同时直达 driver
+            registry_.SetTargets(CmdName::kStop,            {Module::PLANNING, Module::DRIVER});
+            registry_.SetTargets(CmdName::kPause,           {Module::PLANNING});
+            registry_.SetTargets(CmdName::kResume,          {Module::PLANNING});
+            registry_.SetTargets(CmdName::kReset,           {Module::PLANNING});
+            registry_.SetTargets(CmdName::kQueryMotionDone, {Module::PLANNING});
+        } else {
+            // 手动：直控 driver，不经 planning（避免重复转发 / 状态误判）
+            registry_.SetTargets(CmdName::kStop,            {Module::DRIVER});
+            registry_.SetTargets(CmdName::kPause,           {Module::DRIVER});
+            registry_.SetTargets(CmdName::kResume,          {Module::DRIVER});
+            registry_.SetTargets(CmdName::kReset,           {Module::DRIVER});
+            registry_.SetTargets(CmdName::kQueryMotionDone, {Module::DRIVER});
+        }
+        auto_mode_ = auto_mode;
+        RCLCPP_INFO(node_->get_logger(), "路由模式切换为 %s", auto_mode ? "自动" : "手动");
+    }
+
+    // ================================================================
+    //  单向下发（fire-and-forget，不参与扇出回执）
+    // ================================================================
+
+    void CommandDispatcher::send_raw_to_module(RusUtils::Module module,
+                                               const std::string& cmd,
+                                               const std::vector<double>& args) {
+        std::string service(RusUtils::module_service_name(module));
+        auto it = clients_.find(service);
+        if (it == clients_.end()) {
+            it = clients_.emplace(service,
+                node_->create_client<CommandService>(service)).first;
+        }
+        auto& client = it->second;
+        if (!client->service_is_ready()) {
+            RCLCPP_WARN(node_->get_logger(), "服务 %s 不可用，无法下发 %s", service.c_str(), cmd.c_str());
+            return;
+        }
+        auto req = std::make_shared<CommandService::Request>();
+        req->client_id = 0;
+        req->command = cmd;
+        req->args = args;
+        client->async_send_request(req);
     }
 
     // ================================================================

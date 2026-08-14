@@ -74,6 +74,12 @@ namespace RusRobotDriver {
         if (name == kStop)            return StopCmd{};
         if (name == kPause)           return PauseCmd{};
         if (name == kResume)          return ResumeCmd{};
+        if (name == kReset) {
+            ResetCmd cmd;
+            if (!args.empty())          cmd.mode   = static_cast<uint8_t>(args[0]);
+            if (args.size() > 1)        cmd.enable = static_cast<uint8_t>(args[1]);
+            return cmd;
+        }
         if (name == kStopJOGDecel)    return StopJOGDecelCmd{};
         if (name == kStopJOGImmediate) return StopJOGImmediateCmd{};
 
@@ -85,6 +91,8 @@ namespace RusRobotDriver {
         if (name == kRobotEnable)    return RobotEnableCmd{args.empty() ? uint8_t{1} : static_cast<uint8_t>(args[0])};
         if (name == kGetState)       return GetStateCmd{args.empty() ? uint8_t{1} : static_cast<uint8_t>(args[0])};
         if (name == kIsMotionDone)   return IsMotionDoneCmd{};
+        // 扇出指令 query_motion_done：bridge 同时发给 planning + driver，等价 is_motion_done
+        if (name == kQueryMotionDone) return IsMotionDoneCmd{};
 
         // ── 文件执行（path 由调用方设置） ──
         if (name == kRunFile)        return RunFileCmd{};

@@ -80,6 +80,9 @@ namespace RusRealRobotDriver {
         // 暂停运动
         int PauseMotion() override;
 
+        // 急停后重置（清错误 + 按参数重新使能）
+        int ResetMotion(const RusRobotDriver::ResetCmd& cmd) override;
+
         /**
          * @brief 查询运动是否已完成
          */

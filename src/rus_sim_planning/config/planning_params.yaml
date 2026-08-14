@@ -1,0 +1,33 @@
+# 规划节点参数（rus_sim_planning）
+planning_node:
+  ros__parameters:
+    # ── 数据获取 ──
+    point_cloud_topic: "/preprocessed_cloud"   # 点云话题（感知/预处理输出）
+    driver_state_topic: "/driver/state"        # 机械臂状态话题（驱动节点发布）
+    driver_command_service: "/driver/command"  # 伺服指令转发目标（驱动执行）
+
+    # ── 伺服执行（起终点 / 规划 / 执行通过 /planning/command 外部指令设置）──
+    servo_rate_hz: 125.0                       # 伺服指令发布频率 [Hz]（驱动控制循环 1kHz，滤波带宽 ~5Hz，125Hz 平滑且开销小）
+    interpolate_points: 10                     # 相邻路径点之间插值点数
+
+    # ── 规划工作流（/planning/command 指令 + 事件）──
+    #   pre_scan_start →（等待点云）→ pre_scan_end →（pre_scan_done 事件）
+    #   → set_start_pose / set_end_pose → plan（plan_done 事件）→ execute（scan_done 事件）
+    # 预扫查门：未完成 pre_scan_end（无点云数据）时 plan 会失败并上报 error 事件
+    alpha: 1.0            # 椭圆 Gabriel 条件检查参数
+    graph_k: 30           # 建图 k-NN 参数
+    normal_k: 30          # 法线估计参数
+    projection_k: 30      # 重投影参数
+    tol: 1.0e-6           # 长度变化容差
+    max_iter: 40          # 最大迭代轮次
+    use_smoothing: true   # 是否开启平滑
+    lambda: 0.63          # Taubin 平滑参数
+    mu: -0.65             # Taubin 平滑参数
+
+    # ── 探头标定（法兰→探头 变换矩阵，16 元素行优先）──
+    # 探头安装在机械臂末端（待标定）。轨迹按探头扫查设计：
+    #   起终点(法兰坐标) → 法兰→探头 → 点云上找最近点规划路径
+    #   输出路径点(探头接触点) → 探头→法兰 → 作为法兰位姿交给驱动
+    # 未配置时用单位矩阵（探头与法兰重合）
+    # 注意：不要写空数组 probe_to_flange: []（ROS2 不设值会导致 declare_parameter 抛异常）；
+    #       标定后填 16 个元素，例如：probe_to_flange: [1,0,0,0, 0,1,0,0, 0,0,1,0.05, 0,0,0,1]

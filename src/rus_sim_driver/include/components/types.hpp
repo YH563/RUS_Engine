@@ -55,6 +55,10 @@ namespace RusRobotDriver {
     struct StopCmd          {};
     struct PauseCmd         {};
     struct ResumeCmd        {};
+    struct ResetCmd {
+        uint8_t mode = 1;    // 复位模式：0=仅软复位（清运动状态），1=完整复位（清错误+重新使能）
+        uint8_t enable = 1;  // 完整复位后是否重新上使能（mode=1 时有效）
+    };
     struct StopJOGDecelCmd  {};
     struct StopJOGImmediateCmd {};
 
@@ -82,7 +86,7 @@ namespace RusRobotDriver {
         ServoStartCmd,     ServoEndCmd,
 
         // 运动控制
-        StopCmd,           PauseCmd,          ResumeCmd,
+        StopCmd,           PauseCmd,          ResumeCmd,         ResetCmd,
         StopJOGDecelCmd,   StopJOGImmediateCmd,
 
         // 文件执行
@@ -111,6 +115,7 @@ namespace RusRobotDriver {
      *   servoj   [q1..q6]
      *   servo_cart [x,y,z,rx,ry,rz]
      *   start_jog [ref, nb, dir, vel, acc, max_dis]
+     *   reset     [mode, enable]
      */
     RobotCommand ParseCommand(std::string_view name, const std::vector<double>& args);
 

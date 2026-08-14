@@ -29,6 +29,7 @@ namespace RusRobotDriver {
         inline constexpr std::string_view kStop       = "stop";
         inline constexpr std::string_view kPause      = "pause";
         inline constexpr std::string_view kResume     = "resume";
+        inline constexpr std::string_view kReset      = "reset";
 
         // ── 驱动控制 ──
         inline constexpr std::string_view kConnect       = "connect";
@@ -38,6 +39,8 @@ namespace RusRobotDriver {
         inline constexpr std::string_view kRobotEnable   = "robot_enable";
         inline constexpr std::string_view kGetState      = "get_state";
         inline constexpr std::string_view kIsMotionDone  = "is_motion_done";
+        // 扇出指令：bridge 会同时发给 planning + driver，驱动侧与 is_motion_done 等价
+        inline constexpr std::string_view kQueryMotionDone = "query_motion_done";
 
         // ── 文件执行 ──
         inline constexpr std::string_view kRunFile       = "run_file";

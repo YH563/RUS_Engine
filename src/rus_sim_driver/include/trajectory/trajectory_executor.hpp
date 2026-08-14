@@ -160,6 +160,20 @@ namespace RusRobotDriver {
          */
         void ClearQueue();
 
+        /**
+         * @brief 复位调度器（急停后重置）：清空队列/活跃段/点动减速状态与计时器，
+         *        回到就绪（RUNNING）态，可立即接受新指令
+         */
+        void Reset();
+
+        /**
+         * @brief 结束伺服模式（ServoMoveEnd）：清理活跃伺服段与队列中的伺服指令
+         *
+         * 伺服段的 IsFinished() 恒为 false（持续存在直至显式结束），若不清理，
+         * IsActive() 会恒返回 true，导致 IsMotionDone() 永远为 false。
+         */
+        void EndServo();
+
         // === 点动控制 ===
 
         /**

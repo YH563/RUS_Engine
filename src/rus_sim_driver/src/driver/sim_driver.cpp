@@ -16,6 +16,7 @@ static const std::string kUrdfPath = kModelDir + "/fairino3_v6.urdf";
 
 namespace RusSimRobotDriver {
     using RusRobotDriver::ControlTarget;
+    using RusRobotDriver::ResetCmd;
 
     RobotSimDriver::RobotSimDriver(const std::string& ip) {
         create_robot();
@@ -95,6 +96,9 @@ namespace RusSimRobotDriver {
     int RobotSimDriver::ServoMoveEnd() {
         if (!is_enabled_) return -1;
         is_servo_enabled_.store(false);
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+        // 清理活跃伺服段，避免 IsMotionDone() 恒 false（ServoSegment::IsFinished 恒 false）
+        trajectory_executor_->EndServo();
         return 0;
     }
 
@@ -152,6 +156,16 @@ namespace RusSimRobotDriver {
         if (!is_enabled_) return -1;
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         trajectory_executor_->Pause();
+        return 0;
+    }
+
+    // 急停后重置：不检查 is_enabled_（急停后可能处于下使能态，重置正是要恢复它）
+    int RobotSimDriver::ResetMotion(const ResetCmd& cmd) {
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+        trajectory_executor_->Reset();
+        is_servo_enabled_ = false;
+        if (cmd.mode >= 1 && cmd.enable != 0)
+            is_enabled_.store(true);  // 完整复位：模拟清错误后重新上使能
         return 0;
     }
 

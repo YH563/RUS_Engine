@@ -72,6 +72,9 @@ namespace RusRobotDriver {
         // 暂停运动
         virtual int PauseMotion() = 0;
 
+        // 急停后重置（清错误 + 按参数重新使能）
+        virtual int ResetMotion(const ResetCmd& cmd) = 0;
+
         // 查询机械臂运动是否已完成
         virtual bool IsMotionDone() const = 0;
     };

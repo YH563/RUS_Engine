@@ -159,6 +159,11 @@ namespace RusSimRobotDriver {
         int PauseMotion() override;
 
         /**
+         * @brief 急停后重置：复位轨迹调度器，可选清错误并重新上使能
+         */
+        int ResetMotion(const RusRobotDriver::ResetCmd& cmd) override;
+
+        /**
          * @brief 查询运动是否已完成
          */
         bool IsMotionDone() const override;

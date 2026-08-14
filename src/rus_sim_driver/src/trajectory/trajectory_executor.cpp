@@ -60,6 +60,34 @@ namespace RusRobotDriver {
         command_queue_.clear();
     }
 
+    // ---- Reset — 急停后重置调度器 ----
+    void TrajectoryExecutor::Reset()
+    {
+        command_queue_.clear();
+        active_segment_.reset();
+
+        // 复位点动减速状态与计时器，避免残留状态污染下一轮运动
+        jog_decel_active_ = false;
+        jog_decel_speed_ = 0.0;
+        last_jog_cmd_ = MotionCommand{};
+        last_step_time_ = -1.0;
+
+        // 回到就绪态：无活跃段时 Step() 下一帧会把 hold_target_ 刷新为当前状态
+        exec_state_ = ExecState::RUNNING;
+    }
+
+    // ---- EndServo — 结束伺服模式：清理活跃伺服段与队列残留伺服指令 ----
+    void TrajectoryExecutor::EndServo()
+    {
+        // 销毁活跃伺服段（其 IsFinished 恒 false，不清理会令 IsActive 恒 true）
+        if (active_segment_ && is_servo_type(active_segment_->GetType()))
+            active_segment_.reset();
+
+        // 清掉队首残留的伺服指令（后续若有规划指令可正常消费）
+        while (!command_queue_.empty() && is_servo_type(command_queue_.front().type))
+            command_queue_.pop_front();
+    }
+
     // ---- StopJOGDecel — 减速停止点动 ----
     void TrajectoryExecutor::StopJOGDecel()
     {

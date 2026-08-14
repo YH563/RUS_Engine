@@ -64,6 +64,12 @@ namespace RusUtils {
             table_[std::string(name)] = Entry{std::move(modules)};
         }
 
+        /// 运行时修改指令的扇出目标（模式切换等场景用：手动 ↔ 自动 切换 pause/resume 等去向）
+        void SetTargets(std::string_view name, std::vector<Module> modules) {
+            auto it = table_.find(std::string(name));
+            if (it != table_.end()) it->second.targets = std::move(modules);
+        }
+
         /// 指令是否已注册
         bool IsRegistered(std::string_view name) const {
             return table_.count(std::string(name)) > 0;

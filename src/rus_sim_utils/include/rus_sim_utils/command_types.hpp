@@ -34,6 +34,18 @@ namespace RusUtils {
             static constexpr std::string_view kName = CmdName::kShutdown;
         };
 
+        /// 模式切换（bridge 本地处理：修改 pause/resume/reset 等指令的扇出目标）
+        /// 0=手动（直控 driver），1=自动（planning 协调）
+        struct SetMode {
+            static constexpr std::string_view kName = CmdName::kSetMode;
+            std::vector<double> mode;                     // [0=手动, 1=自动]
+            static bool ParseArgs(const std::vector<double>& a, SetMode& o) {
+                if (a.size() < 1) return false;
+                o.mode = a;
+                return true;
+            }
+        };
+
         struct PreScanStart {
             static constexpr std::string_view kName = CmdName::kPreScanStart;
         };
@@ -84,6 +96,14 @@ namespace RusUtils {
 
         struct Reset {
             static constexpr std::string_view kName = CmdName::kReset;
+            double mode = 1;    // 复位模式：0=仅软复位（清运动状态），1=完整复位（清错误+重新使能）
+            double enable = 1;  // 完整复位后是否重新上使能（mode=1 时有效）
+            static bool ParseArgs(const std::vector<double>& a, Reset& o) {
+                if (a.size() > 2) return false;
+                if (!a.empty())    o.mode   = a[0];
+                if (a.size() > 1)  o.enable = a[1];
+                return true;
+            }
         };
 
         struct QueryPreScanDone {
@@ -236,7 +256,8 @@ namespace RusUtils {
         // ════════════════════════════════════════════════════════════
 
         using CommandVariant = std::variant<
-            Connect, Shutdown, PreScanStart, PreScanEnd,
+            Connect, Shutdown, SetMode,
+            PreScanStart, PreScanEnd,
             SetStartPose, SetEndPose, Plan, Execute,
             Stop, Pause, Resume, Reset,
             QueryPreScanDone, QueryMotionDone,

@@ -3,7 +3,7 @@
 <package format="3">
   <name>rus_sim_planning</name>
   <version>0.0.1</version>
-  <description>规划层：轨迹生成 + 伺服闭环 + 碰撞检测</description>
+  <description>规划层：点云轨迹生成 + 伺服闭环 + 碰撞检测</description>
   <maintainer email="user@example.com">user</maintainer>
   <license>MIT</license>
 
@@ -12,7 +12,13 @@
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>rus_sim_interfaces</depend>
+  <depend>rus_sim_utils</depend>
+  <depend>pcl_conversions</depend>
+  <depend>PCL</depend>
+  <depend>Boost</depend>
+  <exec_depend>Eigen3</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

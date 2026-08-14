@@ -25,6 +25,8 @@ namespace RusUtils {
     namespace CmdName {
         inline constexpr std::string_view kConnect          = "connect";
         inline constexpr std::string_view kShutdown         = "shutdown";
+        // 模式切换（bridge 本地处理，修改扇出目标）：0=手动（直控 driver），1=自动（planning 协调）
+        inline constexpr std::string_view kSetMode          = "set_mode";
         inline constexpr std::string_view kPreScanStart     = "pre_scan_start";
         inline constexpr std::string_view kPreScanEnd       = "pre_scan_end";
         inline constexpr std::string_view kSetStartPose     = "set_start_pose";

@@ -38,7 +38,8 @@ install(TARGETS bridge_core
   ARCHIVE DESTINATION lib
 )
 install(TARGETS rus_sim_bridge_node DESTINATION lib/${PROJECT_NAME})
-install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch)
+install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch
+  PATTERN "__pycache__" EXCLUDE)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 
 ament_package()

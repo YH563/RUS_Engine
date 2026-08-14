@@ -66,8 +66,15 @@ namespace rus_sim_bridge {
         void finish_fanout(const std::shared_ptr<FanOutContext>& ctx, bool success,
                            const std::string& message, std::vector<double> result);
 
+        /// 按模式切换模式相关指令（stop/pause/resume/reset/query_motion_done）的扇出目标
+        void apply_mode(bool auto_mode);
+        /// 向指定模块下发一条指令（fire-and-forget，不参与扇出回执）
+        void send_raw_to_module(RusUtils::Module module, const std::string& cmd,
+                                const std::vector<double>& args);
+
         std::shared_ptr<rclcpp::Node> node_;
         int timeout_ms_ = 5000;
+        bool auto_mode_ = true;   // 当前路由模式（默认自动）
 
         // 指令 → 目标模块注册表
         RusUtils::CommandRegistry registry_;

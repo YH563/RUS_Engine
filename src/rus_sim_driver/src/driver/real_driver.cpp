@@ -138,6 +138,20 @@ namespace RusRealRobotDriver {
         return -1;  // TODO
     }
 
+    // 急停后重置：清错误 + 按参数重新使能（参数外部可配，便于适配不同 SDK 版本/产线）
+    int RobotRealDriver::ResetMotion(const RusRobotDriver::ResetCmd& cmd)
+    {
+        if (cmd.mode < 1)
+            return 0;  // 仅软复位：真实驱动无本地轨迹层状态，无需额外操作
+
+        // 完整复位：先清除所有错误，再按参数决定是否重新上使能
+        int ret = robot.ResetAllError();
+        if (ret != 0) return -1;
+        ret = robot.RobotEnable(cmd.enable);
+        if (ret != 0) return -1;
+        return 0;
+    }
+
     bool RobotRealDriver::IsMotionDone() const
     {
         return true;  // TODO: 查询 SDK 运动状态

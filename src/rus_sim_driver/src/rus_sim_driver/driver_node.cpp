@@ -194,6 +194,7 @@ namespace RusDriverNode {
             [&](const StopCmd&)           { return driver_->StopMotion() == 0; },
             [&](const PauseCmd&)          { return driver_->PauseMotion() == 0; },
             [&](const ResumeCmd&)         { return driver_->ResumeMotion() == 0; },
+            [&](const ResetCmd& r)        { return driver_->ResetMotion(r) == 0; },
             [&](const StopJOGDecelCmd&)   { return driver_->StopJOGDecel() == 0; },
             [&](const StopJOGImmediateCmd&) { return driver_->StopJOGImmediate() == 0; },
 

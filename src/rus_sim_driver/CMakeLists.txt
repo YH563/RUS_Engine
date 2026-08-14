@@ -176,6 +176,7 @@ install(PROGRAMS scripts/keyboard_control.py
 # 安装 launch 文件
 install(DIRECTORY launch/
     DESTINATION share/${PROJECT_NAME}/launch
+    PATTERN "__pycache__" EXCLUDE
 )
 
 # 安装 config 文件
