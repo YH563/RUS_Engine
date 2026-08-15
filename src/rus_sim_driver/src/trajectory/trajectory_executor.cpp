@@ -114,6 +114,17 @@ namespace RusRobotDriver {
         return active_segment_ != nullptr && !active_segment_->IsFinished();
     }
 
+    bool TrajectoryExecutor::IsServoActive() const
+    {
+        return active_segment_ && is_servo_type(active_segment_->GetType());
+    }
+
+    std::optional<VectorXd> TrajectoryExecutor::CurrentServoQdes() const
+    {
+        if (!active_segment_) return std::nullopt;
+        return active_segment_->ServoQdes();
+    }
+
     ControlTarget TrajectoryExecutor::Step(double sim_time, const RobotState& state)
     {
         if (exec_state_ != ExecState::RUNNING)

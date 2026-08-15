@@ -26,13 +26,17 @@ namespace rus_sim_bridge {
         using namespace RusUtils;
 
         // ── planning（规划 / 执行） ──
-        registry_.Register(CmdName::kPreScanStart,     {Module::PLANNING});
-        registry_.Register(CmdName::kPreScanEnd,       {Module::PLANNING});
         registry_.Register(CmdName::kSetStartPose,     {Module::PLANNING});
         registry_.Register(CmdName::kSetEndPose,       {Module::PLANNING});
         registry_.Register(CmdName::kPlan,             {Module::PLANNING});
         registry_.Register(CmdName::kExecute,          {Module::PLANNING});
-        registry_.Register(CmdName::kQueryPreScanDone, {Module::PLANNING});
+
+        // ── perception（点云预扫查 / 预处理）──
+        // pre_scan_* 由 perception 全权处理（采集/处理/发布 /preprocessed_cloud），
+        // planning 通过订阅 pre_scan_done 事件获取完成标记。
+        registry_.Register(CmdName::kPreScanStart,     {Module::PERCEPTION});
+        registry_.Register(CmdName::kPreScanEnd,       {Module::PERCEPTION});
+        registry_.Register(CmdName::kQueryPreScanDone, {Module::PERCEPTION});
 
         // ── driver（驱动） ──
         registry_.Register(CmdName::kConnect,          {Module::DRIVER});

@@ -35,7 +35,18 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/dijkstra_shortest_paths.hpp>
 
+#include "rus_sim_utils/utils.hpp"
+
 namespace RusSimPlanning {
+
+    // 通用位姿工具转发（实现见 rus_sim_utils/utils.hpp）
+    using RusUtils::FlangeToProbe;
+    using RusUtils::ProbeToFlange;
+    using RusUtils::PoseToMatrix4d;
+    using RusUtils::Matrix4dToPose;
+    using RusUtils::MakePose;
+    using RusUtils::PoseToRPY;
+    using RusUtils::FlangePosToPose;
 
     using Vector3d = Eigen::Vector3d;                 // 3D 向量
     using Matrix4d = Eigen::Matrix4d;                 // 4x4 矩阵

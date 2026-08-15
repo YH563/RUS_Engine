@@ -30,6 +30,10 @@ def generate_launch_description():
         get_package_share_directory('rus_sim_planning'),
         'launch', 'planning.launch.py')
 
+    perception_launch = os.path.join(
+        get_package_share_directory('rus_sim_perception'),
+        'launch', 'perception.launch.py')
+
     return LaunchDescription([
         # 桥接层：前后端 WS 网关（/control /state /sensor）
         IncludeLaunchDescription(
@@ -42,6 +46,10 @@ def generate_launch_description():
         # 规划层：轨迹生成 / 插值 / 伺服执行
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(planning_launch),
+        ),
+        # 感知层：实时建图 / 离线点云加载
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(perception_launch),
         ),
     ])
 

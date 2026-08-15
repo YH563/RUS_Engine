@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <Eigen/Geometry>
 
 #include "trajectory_executor.hpp"
@@ -61,6 +62,11 @@ namespace RusRobotDriver {
          */
         int GetType() const override;
 
+        /**
+         * @brief 到位判定目标：返回当前滤波后关节角 q_filt_
+         */
+        std::optional<VectorXd> ServoQdes() const override { return q_filt_; }
+
     private:
         uint8_t motion_type_;  // MOTION_TYPE_SERVOJ 或 MOTION_TYPE_SERVOC
 
@@ -73,7 +79,7 @@ namespace RusRobotDriver {
         double last_sim_time_{-1.0};  // 上一帧时间
 
         // 滤波器参数
-        static constexpr double kFilterWn  = 30.0;   // 自然频率 [rad/s] ≈ 5Hz
+        static constexpr double kFilterWn  = 60.0;   // 自然频率 [rad/s] ≈ 10Hz（原 30≈5Hz，接近终点快速旋转时滞后导致掉）
         static constexpr double kFilterZeta = 1.0;   // 阻尼比，1=临界阻尼
 
         // 每帧最大关节位移 [rad]，防止目标跳变过大

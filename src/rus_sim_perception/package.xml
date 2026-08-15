@@ -3,7 +3,7 @@
 <package format="3">
   <name>rus_sim_perception</name>
   <version>0.0.1</version>
-  <description>感知层：点云/视觉/融合组件 → EnvironmentState</description>
+  <description>感知层：点云预处理 → /preprocessed_cloud（planning 规划输入）；预留图像/超声/融合扩展</description>
   <maintainer email="user@example.com">user</maintainer>
   <license>MIT</license>
 
@@ -12,7 +12,12 @@
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>rus_sim_interfaces</depend>
+  <depend>rus_sim_utils</depend>
+  <depend>pcl_conversions</depend>
+  <depend>PCL</depend>
+  <exec_depend>Eigen3</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

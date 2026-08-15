@@ -229,6 +229,11 @@ namespace RusSimRobotDriver {
          */
         void set_init_joints(const VectorXd& q_init);
 
+        /**
+         * @brief 到位判定：servo_end 请求后，等实际关节收敛到伺服目标（或超时）再清理伺服段
+         */
+        void check_servo_end();
+
         // === MuJoCo 仿真引擎 ===
         MjModelPtr mj_model_{nullptr, &mj_deleteModel};
         MjDataPtr  mj_data_{nullptr, &mj_deleteData};
@@ -258,6 +263,12 @@ namespace RusSimRobotDriver {
         // === 状态标志 ===
         std::atomic<bool> is_drag_teach_{false};
         std::atomic<bool> is_servo_enabled_{false};
+
+        // === servo_end 到位判定（in-position）状态 ===
+        std::atomic<bool> servo_end_requested_{false};   // 已收到 servo_end，等待到位后清理
+        double servo_end_deadline_{-1.0};                // 到位判定超时时刻（sim_time）
+        double servo_settle_tolerance_{0.005};           // 到位关节误差阈值 [rad]
+        double servo_settle_timeout_{2.0};               // 到位判定超时 [s]
 
         std::atomic<bool> is_connected_{false};
         std::atomic<bool> is_enabled_{false};

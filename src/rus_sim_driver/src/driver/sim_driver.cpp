@@ -97,9 +97,35 @@ namespace RusSimRobotDriver {
         if (!is_enabled_) return -1;
         is_servo_enabled_.store(false);
         std::lock_guard<std::recursive_mutex> lock(mtx_);
-        // 清理活跃伺服段，避免 IsMotionDone() 恒 false（ServoSegment::IsFinished 恒 false）
-        trajectory_executor_->EndServo();
+        // 不立即清理伺服段：标记"等待到位"，由控制循环做 in-position 判定
+        // （实际关节收敛到伺服滤波目标或超时）后再清理，保证机械臂稳定停在终点
+        servo_end_requested_.store(true);
+        servo_end_deadline_ = sim_time_.load() + servo_settle_timeout_;
         return 0;
+    }
+
+    // ---- check_servo_end — servo_end 到位判定（in-position） ----
+    void RobotSimDriver::check_servo_end() {
+        if (!servo_end_requested_.load()) return;
+
+        if (!trajectory_executor_->IsServoActive()) {
+            // 伺服段已被清理（如 stop/急停）→ 复位标志
+            servo_end_requested_.store(false);
+            return;
+        }
+        auto q_des = trajectory_executor_->CurrentServoQdes();
+        if (q_des &&
+            (current_state_.joint_pos - *q_des).lpNorm<Eigen::Infinity>() < servo_settle_tolerance_) {
+            // 实际关节已收敛到伺服目标 → 结束伺服
+            trajectory_executor_->EndServo();
+            servo_end_requested_.store(false);
+            return;
+        }
+        if (sim_time_.load() >= servo_end_deadline_) {
+            // 超时兜底：强制结束，避免伺服段长期占用
+            trajectory_executor_->EndServo();
+            servo_end_requested_.store(false);
+        }
     }
 
     int RobotSimDriver::ServoJ(MotionCommand& cmd) {
@@ -239,8 +265,13 @@ namespace RusSimRobotDriver {
         }
         P.col(n) = pos - prev_pos;
 
-        ki_model_ = std::make_shared<EAIK::Robot>(H, P, Eigen::Matrix3d::Identity(),
-                                                   std::vector<std::pair<int, double>>{});
+        // EAIK::Robot(H, P, R6T, ...)：R6T 是末端相对第 6 关节坐标系的固定旋转。
+        // fwdkin(q) = R_06(q) * R6T，R_06 从 Identity 出发 —— 必须把 URDF 链 q=0 的
+        // 初始姿态（所有 joint origin 累积旋转 rot）传给 R6T，否则 EAIK 与 URDF/mujoco
+        // 的末端姿态差一个固定旋转（本机型为 Rx(-90°)，导致 IK 解出的 q 在 mujoco 中
+        // 朝向错误、flange_offset 补偿方向错误）。
+        ki_model_ = std::make_shared<EAIK::Robot>(H, P, rot,
+                                                  std::vector<std::pair<int, double>>{});
 
         // 初始姿态
         VectorXd q_init(mj_model_->nq);
@@ -320,6 +351,7 @@ namespace RusSimRobotDriver {
 
             {
                 std::lock_guard<std::recursive_mutex> lock(mtx_);
+                check_servo_end();
                 compute_control();
                 step_physics();
                 sync_state();

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <Eigen/SVD>
 
@@ -161,6 +162,9 @@ namespace RusRobotDriver {
         // IK 求解（KinematicsSolver 内部处理法兰偏移补偿）
         IKS::IK_Solution ik = kinematics_->InverseKinematics(T);
         if (ik.Q.empty()) {
+            std::fprintf(stderr,
+                "[PlannedSegment] WARN: IK 无解（目标 pos %.3f,%.3f,%.3f），保持当前位置\n",
+                T(0,3), T(1,3), T(2,3));
             target.q_des   = state.joint_pos;
             target.qd_des  = VectorXd::Zero(state.joint_pos.size());
             target.qdd_des = VectorXd::Zero(state.joint_pos.size());

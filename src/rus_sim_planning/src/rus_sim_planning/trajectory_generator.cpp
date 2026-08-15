@@ -1,5 +1,4 @@
 #include "rus_sim_planning/trajectory_generator.hpp"
-#include "rus_sim_planning/planning_utils.hpp"
 
 namespace RusSimPlanning {
 
@@ -107,6 +106,36 @@ namespace RusSimPlanning {
         // 路径点（点云表面）即探头接触点：法线/切向量生成探头姿态，
         // 再经 探头→法兰 变换后作为法兰位姿输出给驱动
         auto convert = [m, this]() {
+            // 先计算每点原始切线（前后差分），再做滑动平均消除方向突变
+            // （局部差分在急转弯处切线突变 → GenerateQuaternion 姿态突变 → 伺服 IK 解跳变）
+            std::vector<Vector3d> tangent_raw(m);
+            for (int i = 0; i < m; ++i) {
+                if (i == 0) {
+                    tangent_raw[i] = this->result_path_[1] - this->result_path_[0];
+                } else if (i == m - 1) {
+                    tangent_raw[i] = this->result_path_[m-1] - this->result_path_[m-2];
+                } else {
+                    Vector3d forward  = this->result_path_[i+1] - this->result_path_[i];
+                    Vector3d backward = this->result_path_[i] - this->result_path_[i-1];
+                    tangent_raw[i] = forward + backward;
+                }
+            }
+            // 滑动平均（窗口 ±2，共 5 点），消除局部方向突变
+            const int kWin = 2;
+            std::vector<Vector3d> tangent(m);
+            for (int i = 0; i < m; ++i) {
+                Vector3d sum(0, 0, 0);
+                int cnt = 0;
+                for (int k = -kWin; k <= kWin; ++k) {
+                    int j = i + k;
+                    if (j >= 0 && j < m) { sum += tangent_raw[j]; ++cnt; }
+                }
+                if (sum.norm() > 1e-9)
+                    tangent[i] = sum.normalized();
+                else
+                    tangent[i] = tangent_raw[i].normalized();
+            }
+
             this->trajectory_.reserve(static_cast<size_t>(m));
             for (int i = 0; i < m; i++) {
                 Pose temp_pose;
@@ -114,25 +143,26 @@ namespace RusSimPlanning {
                 temp_pose.position.y = this->result_path_[i].y();
                 temp_pose.position.z = this->result_path_[i].z();
 
-                // 切向量计算
-                Vector3d tangent;
-                if (i == 0) {
-                    tangent = this->result_path_[1] - this->result_path_[0];
-                } else if (i == m - 1) {
-                    tangent = this->result_path_[m-1] - this->result_path_[m-2];
-                } else {
-                    Vector3d forward  = this->result_path_[i+1] - this->result_path_[i];
-                    Vector3d backward = this->result_path_[i] - this->result_path_[i-1];
-                    tangent = (forward + backward).normalized();
-                }
-
-                Quaterniond q = GenerateQuaternion(this->result_path_normals_[i], tangent);
+                Quaterniond q = GenerateQuaternion(this->result_path_normals_[i], tangent[i]);
                 temp_pose.orientation.x = q.x();
                 temp_pose.orientation.y = q.y();
                 temp_pose.orientation.z = q.z();
                 temp_pose.orientation.w = q.w();
                 // 探头接触点 → 法兰位姿
                 this->trajectory_.push_back(ProbeToFlange(temp_pose, parameter_.probe_to_flange));
+
+                // debug：首尾路径点（位置/法线/姿态），核对是否贴合表面、朝向是否正确
+                if (i == 0 || i == m - 1) {
+                    const Vector3d& n = this->result_path_normals_[i];
+                    double rx = 0.0, ry = 0.0, rz = 0.0;
+                    RusUtils::PoseToRPY(temp_pose, rx, ry, rz);
+                    RCLCPP_INFO(rclcpp::get_logger(class_name_),
+                        "路径点[%d/%d]: pos(%.3f, %.3f, %.3f) normal(%.3f, %.3f, %.3f) "
+                        "姿态(%.3f,%.3f,%.3f,%.3f) RPY(%.3f, %.3f, %.3f)",
+                        i, m, temp_pose.position.x, temp_pose.position.y, temp_pose.position.z,
+                        n.x(), n.y(), n.z(),
+                        q.x(), q.y(), q.z(), q.w(), rx, ry, rz);
+                }
             }
         };
 
@@ -324,7 +354,14 @@ namespace RusSimPlanning {
         ne.setSearchMethod(tree);
         ne.setKSearch(parameter_.normal_k);
 
-        ne.setViewPoint(0.0f, 0.0f, 0.0f);
+        // 法线朝向：视点设在点云上方（探头/传感器来向），使法线统一朝表面外
+        // （表面朝上场景：法线朝 +z → GenerateQuaternion 中 z 轴 = -normal 朝 -z，
+        //   即法兰 z 轴朝下压向表面，符合扫查约定）
+        float z_max = -1.0e6f;
+        for (const auto& p : cloud->points) {
+            if (p.z > z_max) z_max = p.z;
+        }
+        ne.setViewPoint(0.0f, 0.0f, z_max + 1.0f);
         pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
         ne.compute(*normals);
 

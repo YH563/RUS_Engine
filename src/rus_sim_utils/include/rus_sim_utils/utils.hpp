@@ -1,16 +1,18 @@
 #pragma once
 
 // ════════════════════════════════════════════════════════════════════
-//  规划包内部坐标 / 位姿转换工具
+//  位姿 / 坐标通用转换工具（几何域）
 //  ────────────────────────────────────────────────────────────────────
-//  统一收口 planning 用到的坐标转换：
-//    - MakePose      坐标数组 → 位姿（外部指令 set_start_pose / set_end_pose）
+//  统一收口感知 / 规划等各模块共用的坐标、位姿转换，避免各包重复实现：
 //    - PoseToMatrix4d / Matrix4dToPose   位姿 ↔ 齐次矩阵
-//    - PoseToRPY     位姿 → RPY（下发驱动 servo_cart 用，固定轴 XYZ）
-//    - FlangeToProbe / ProbeToFlange    法兰 ↔ 探头（探头安装在机械臂末端，待标定）
+//    - MakePose       坐标数组 → 位姿（外部指令 set_start_pose / set_end_pose）
+//    - PoseToRPY      位姿 → RPY（下发驱动 servo_cart 用，固定轴 XYZ）
+//    - FlangePosToPose  驱动状态 flange_pos[6] → 法兰位姿
+//    - FlangeToProbe / ProbeToFlange   法兰 ↔ 探头（探头安装在机械臂末端，待标定）
 //
-//  说明：不依赖 rus_sim_utils 的 FlangePose（moveit 时代遗留，mm+角度，
-//        与当前"直接驱动法兰坐标（m+rad）"的用法不匹配）。
+//  坐标约定：m + rad；RPY 为固定轴 XYZ（R = Rz·Ry·Rx），
+//  与驱动 flange_pos 输出 / servo_cart 输入一致。
+//  依赖：Eigen、geometry_msgs
 // ════════════════════════════════════════════════════════════════════
 
 #include <cmath>
@@ -19,14 +21,9 @@
 #include <Eigen/Dense>
 #include <geometry_msgs/msg/pose.hpp>
 
-namespace RusSimPlanning {
+namespace RusUtils {
 
-    /**
-     * @brief 位姿 → 4x4 齐次变换矩阵
-     *
-     * @param pose 输入位姿
-     * @return 对应齐次矩阵（旋转 + 平移）
-     */
+    /// 位姿 → 4x4 齐次变换矩阵
     inline Eigen::Matrix4d PoseToMatrix4d(const geometry_msgs::msg::Pose& pose)
     {
         Eigen::Matrix4d mat = Eigen::Matrix4d::Identity();
@@ -37,12 +34,7 @@ namespace RusSimPlanning {
         return mat;
     }
 
-    /**
-     * @brief 4x4 齐次变换矩阵 → 位姿
-     *
-     * @param mat 输入齐次矩阵
-     * @return 对应位姿
-     */
+    /// 4x4 齐次变换矩阵 → 位姿
     inline geometry_msgs::msg::Pose Matrix4dToPose(const Eigen::Matrix4d& mat)
     {
         geometry_msgs::msg::Pose pose;
@@ -109,6 +101,33 @@ namespace RusSimPlanning {
         rz = std::atan2(R(1, 0), R(0, 0));
     }
 
+    /// 驱动状态 flange_pos[6]（[x,y,z,rx,ry,rz]，m+rad，固定轴 XYZ RPY）→ 法兰位姿
+    inline geometry_msgs::msg::Pose FlangePosToPose(const std::vector<double>& flange_pos)
+    {
+        geometry_msgs::msg::Pose pose;
+        if (flange_pos.size() >= 3) {
+            pose.position.x = flange_pos[0];
+            pose.position.y = flange_pos[1];
+            pose.position.z = flange_pos[2];
+        }
+        if (flange_pos.size() >= 6) {
+            const double rx = flange_pos[3];
+            const double ry = flange_pos[4];
+            const double rz = flange_pos[5];
+            Eigen::AngleAxisd roll(rx, Eigen::Vector3d::UnitX());
+            Eigen::AngleAxisd pitch(ry, Eigen::Vector3d::UnitY());
+            Eigen::AngleAxisd yaw(rz, Eigen::Vector3d::UnitZ());
+            Eigen::Quaterniond q = yaw * pitch * roll;
+            pose.orientation.x = q.x();
+            pose.orientation.y = q.y();
+            pose.orientation.z = q.z();
+            pose.orientation.w = q.w();
+        } else {
+            pose.orientation.w = 1.0;
+        }
+        return pose;
+    }
+
     /**
      * @brief 法兰位姿 → 探头位姿
      *
@@ -141,4 +160,4 @@ namespace RusSimPlanning {
         return Matrix4dToPose(PoseToMatrix4d(pose) * probe_to_flange.inverse());
     }
 
-}  // namespace RusSimPlanning
+}  // namespace RusUtils

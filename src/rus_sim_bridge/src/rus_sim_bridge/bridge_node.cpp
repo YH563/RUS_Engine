@@ -113,18 +113,19 @@ namespace rus_sim_bridge {
 
     void BridgeNode::on_state(const rus_sim_interfaces::msg::RobotState::SharedPtr msg) {
         RusUtils::StateMessage s;
-        s.timestamp = msg->timestamp;
+        s.timestamp = rclcpp::Time(msg->header.stamp).seconds();
         s.joint_pos = msg->joint_pos;
         s.joint_vel = msg->joint_vel;
         s.joint_acc = msg->joint_acc;
         s.effort = msg->effort;
         s.flange_pos = msg->flange_pos;
 
-        if (last_state_ts_ > 0.0 && msg->timestamp > last_state_ts_) {
-            double dt = msg->timestamp - last_state_ts_;
+        const double ts = rclcpp::Time(msg->header.stamp).seconds();
+        if (last_state_ts_ > 0.0 && ts > last_state_ts_) {
+            double dt = ts - last_state_ts_;
             if (dt > 0.0 && dt < 1.0) state_rate_ = 1.0 / dt;
         }
-        last_state_ts_ = msg->timestamp;
+        last_state_ts_ = ts;
         s.frame_rate = state_rate_;
 
         ws_.BroadcastState(RusUtils::SerializeState(s));

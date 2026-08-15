@@ -2,6 +2,7 @@
 
 #include <deque>
 #include <memory>
+#include <optional>
 
 #include "components/types.hpp"
 #include "components/kinematics.hpp"
@@ -51,6 +52,11 @@ namespace RusRobotDriver {
          * @param state 当前状态
          */
         virtual void UpdateTarget(const MotionCommand& cmd, const RobotState& state) {}
+
+        /**
+         * @brief 伺服段到位判定目标关节角（ServoSegment 返回滤波后目标；其他段返回空）
+         */
+        virtual std::optional<VectorXd> ServoQdes() const { return std::nullopt; }
     };
 
     // 继承自 ITrajectorySegment 的具体段类型（前置声明）
@@ -193,6 +199,16 @@ namespace RusRobotDriver {
          * @return false 空闲或已停止
          */
         bool IsActive() const;
+
+        /**
+         * @brief 当前活跃段是否为伺服段
+         */
+        bool IsServoActive() const;
+
+        /**
+         * @brief 当前活跃伺服段的到位目标关节角（滤波后目标 q_filt_）
+         */
+        std::optional<VectorXd> CurrentServoQdes() const;
 
         // === 主循环接口 ===
 

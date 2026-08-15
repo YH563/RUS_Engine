@@ -1,0 +1,44 @@
+# 感知节点参数（rus_sim_perception）
+perception_node:
+  ros__parameters:
+    # ── 话题参数 ──
+    input_cloud_topic: "/camera/camera/depth/color/points"   # 输入点云话题（深度相机原始点云）
+    output_cloud_topic: "/preprocessed_cloud"                # raw 点云（planning 规划输入，base_link）
+    sensor_cloud_topic: "/sensor/pointcloud"                 # 压缩点云帧（SensorFrame → 前端 /sensor 通路）
+    driver_state_topic: "/driver/state"                      # 机械臂状态话题（位姿时间对齐用）
+
+    # ── 时间对齐 / 调度参数 ──
+    # 点云用 header.stamp、位姿用 RobotState.timestamp（生产端仿真时间），
+    # 处理时按点云采集时刻对位姿队列插值。
+    max_allowed_diff_sec: 0.05       # 点云与位姿最大允许时间差（秒），超差丢帧
+    max_pose_cache: 256              # 位姿缓存最大帧数（driver 125Hz → ~2s）
+    process_period: 1.0              # 处理周期（秒）：对齐→变换→滤波→入图→发布
+
+    # ── 地图参数 ──
+    map_max_points: 0                # 地图点数上限（超过自动体素降采样；0 = 不限）
+
+    # ── 离线点云加载（联调）──
+    input_pcd: "/tmp/test_cloud.pcd"   # 启动即加载的 PCD 路径（空 = 不加载）
+    pcd_dir: ""                        # load_cloud 按索引加载的 PCD 目录（空 = 仅 input_pcd_）
+
+    # ── 滤波参数 ──
+    voxel_leaf_size: 0.003           # 体素滤波器叶子大小（米）
+    passthrough_field: "z"           # 直通滤波字段，可选 "x" / "y" / "z"
+    passthrough_limit_min: -0.5      # 直通滤波最小值
+    passthrough_limit_max: 0.5       # 直通滤波最大值
+    passthrough_negative: false      # 是否取反（提取范围外的点）
+    statistical_mean_k: 50           # 统计滤波邻域点数
+    statistical_std_dev_mul: 1.0     # 统计滤波标准差倍数
+
+    # ── 标定后的相机相对法兰的变换矩阵（16 元素行优先）──
+    # 点云变换：T_base = T_base_flange * camera_to_flange（驱动输出法兰位姿）
+    # 由旧 camera_to_end 换算：camera_to_flange = Trans(0,0,-flange_offset) * camera_to_end
+    #   （z 平移 = -0.04231331 - 0.0938 = -0.13611331，旋转不变）
+    # 未标定可留空（不设置该键），节点使用单位矩阵（相机与法兰重合）
+    camera_to_flange: [
+      -0.6890016, 0.72474778, -0.00417675, 0.09376472,
+      -0.72475632, -0.68896894, 0.00707673, -0.03569825,
+      0.0022512, 0.00790301, 0.99996624, -0.13611331,
+      0.0, 0.0, 0.0, 1.0]
+
+
