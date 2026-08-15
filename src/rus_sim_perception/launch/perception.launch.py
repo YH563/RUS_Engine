@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
-"""rus_sim_perception 感知层启动：点云 / 视觉 / 融合节点（预留占位）。
-
-当前节点实现为空（占位），此 launch 保留结构，感知模块落地后可直接使用。
-
-用法：
-  ros2 launch rus_sim_perception perception.launch.py
+"""rus_sim_perception 感知节点启动文件
+用法: ros2 launch rus_sim_perception perception.launch.py
 """
 
 import os

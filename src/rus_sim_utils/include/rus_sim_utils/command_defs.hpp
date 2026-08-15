@@ -39,6 +39,9 @@ namespace RusUtils {
         inline constexpr std::string_view kReset            = "reset";
         inline constexpr std::string_view kQueryPreScanDone = "query_prescan_done";
         inline constexpr std::string_view kQueryMotionDone  = "query_motion_done";
+        inline constexpr std::string_view kMapClear         = "map_clear";
+        inline constexpr std::string_view kLoadCloud        = "load_cloud";
+        inline constexpr std::string_view kPreScanDone      = "pre_scan_done";
 
         inline constexpr std::string_view kMoveJ            = "movej";
         inline constexpr std::string_view kMoveL            = "movel";

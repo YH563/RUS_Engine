@@ -1,5 +1,4 @@
 #include "rus_sim_planning/trajectory_generator.hpp"
-#include "rus_sim_planning/planning_utils.hpp"
 
 namespace RusSimPlanning {
 
@@ -133,6 +132,19 @@ namespace RusSimPlanning {
                 temp_pose.orientation.w = q.w();
                 // 探头接触点 → 法兰位姿
                 this->trajectory_.push_back(ProbeToFlange(temp_pose, parameter_.probe_to_flange));
+
+                // debug：首尾路径点（位置/法线/姿态），核对是否贴合表面、朝向是否正确
+                if (i == 0 || i == m - 1) {
+                    const Vector3d& n = this->result_path_normals_[i];
+                    double rx = 0.0, ry = 0.0, rz = 0.0;
+                    RusUtils::PoseToRPY(temp_pose, rx, ry, rz);
+                    RCLCPP_INFO(rclcpp::get_logger(class_name_),
+                        "路径点[%d/%d]: pos(%.3f, %.3f, %.3f) normal(%.3f, %.3f, %.3f) "
+                        "姿态(%.3f,%.3f,%.3f,%.3f) RPY(%.3f, %.3f, %.3f)",
+                        i, m, temp_pose.position.x, temp_pose.position.y, temp_pose.position.z,
+                        n.x(), n.y(), n.z(),
+                        q.x(), q.y(), q.z(), q.w(), rx, ry, rz);
+                }
             }
         };
 
@@ -324,7 +336,14 @@ namespace RusSimPlanning {
         ne.setSearchMethod(tree);
         ne.setKSearch(parameter_.normal_k);
 
-        ne.setViewPoint(0.0f, 0.0f, 0.0f);
+        // 法线朝向：视点设在点云上方（探头/传感器来向），使法线统一朝表面外
+        // （表面朝上场景：法线朝 +z → GenerateQuaternion 中 z 轴 = -normal 朝 -z，
+        //   即法兰 z 轴朝下压向表面，符合扫查约定）
+        float z_max = -1.0e6f;
+        for (const auto& p : cloud->points) {
+            if (p.z > z_max) z_max = p.z;
+        }
+        ne.setViewPoint(0.0f, 0.0f, z_max + 1.0f);
         pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
         ne.compute(*normals);
 

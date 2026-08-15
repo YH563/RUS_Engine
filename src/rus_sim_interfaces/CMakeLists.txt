@@ -12,11 +12,13 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # 列出所有接口文件
 set(msg_files
   "msg/RobotState.msg"
   "msg/ModuleEvent.msg"
+  "msg/SensorFrame.msg"
 )
 set(srv_files
   "srv/CommandService.srv"
@@ -28,7 +30,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   ${msg_files}
   ${srv_files}
   ${action_files}
-  DEPENDENCIES builtin_interfaces geometry_msgs sensor_msgs
+  DEPENDENCIES builtin_interfaces geometry_msgs sensor_msgs std_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

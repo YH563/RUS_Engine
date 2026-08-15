@@ -9,11 +9,12 @@ planning_node:
     # ── 伺服执行（起终点 / 规划 / 执行通过 /planning/command 外部指令设置）──
     servo_rate_hz: 125.0                       # 伺服指令发布频率 [Hz]（驱动控制循环 1kHz，滤波带宽 ~5Hz，125Hz 平滑且开销小）
     interpolate_points: 10                     # 相邻路径点之间插值点数
+    movel_timeout_sec: 10.0                    # execute 前 movel 到轨迹起点的等待超时（秒）
 
     # ── 规划工作流（/planning/command 指令 + 事件）──
-    #   pre_scan_start →（等待点云）→ pre_scan_end →（pre_scan_done 事件）
+    #   pre_scan_done（外部：医生完成手动扫查）→ planning 取最新点云初始化
     #   → set_start_pose / set_end_pose → plan（plan_done 事件）→ execute（scan_done 事件）
-    # 预扫查门：未完成 pre_scan_end（无点云数据）时 plan 会失败并上报 error 事件
+    # 预扫查门：未收到外部 pre_scan_done 指令时 plan 会失败并上报 error 事件
     alpha: 1.0            # 椭圆 Gabriel 条件检查参数
     graph_k: 30           # 建图 k-NN 参数
     normal_k: 30          # 法线估计参数

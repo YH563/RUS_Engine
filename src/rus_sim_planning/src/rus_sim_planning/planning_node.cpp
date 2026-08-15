@@ -2,12 +2,12 @@
 
 #include <cmath>
 
+#include <geometry_msgs/msg/pose_array.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
 #include "rus_sim_utils/command_defs.hpp"
-#include "rus_sim_planning/planning_utils.hpp"
 
 namespace RusSimPlanning {
 
@@ -26,6 +26,7 @@ namespace RusSimPlanning {
         driver_command_service_  = declare_parameter<std::string>("driver_command_service", "/driver/command");
         servo_rate_hz_           = declare_parameter<double>("servo_rate_hz", 125.0);
         interpolate_points_      = declare_parameter<int>("interpolate_points", 10);
+        movel_timeout_sec_       = declare_parameter<double>("movel_timeout_sec", 10.0);
 
         // ── 轨迹生成模块参数 ──
         TrajectoryParameter param;
@@ -75,6 +76,9 @@ namespace RusSimPlanning {
         // ── 事件发布（/module_events，bridge 订阅后广播为前端 event）──
         event_pub_ = create_publisher<rus_sim_interfaces::msg::ModuleEvent>("/module_events", 10);
 
+        // ── 规划轨迹可视化（/planned_trajectory，RViz PoseArray 调试用）──
+        path_pub_ = create_publisher<geometry_msgs::msg::PoseArray>("/planned_trajectory", 10);
+
         RCLCPP_INFO(get_logger(),
             "PlanningNode 已启动：点云=%s 状态=%s 指令=/planning/command 伺服=%.0fHz",
             point_cloud_topic_.c_str(), driver_state_topic_.c_str(), servo_rate_hz_);
@@ -116,30 +120,35 @@ namespace RusSimPlanning {
             RCLCPP_INFO(get_logger(), "终点已设置: (%.3f, %.3f, %.3f)",
                 goal_pose_->position.x, goal_pose_->position.y, goal_pose_->position.z);
         }
-        else if (req->command == kPreScanStart) {
-            // 预扫查开始：重置完成标记，等待点云数据
-            prescan_done_ = false;
-            res->success = true;
-            res->message = "pre_scan started";
-            RCLCPP_INFO(get_logger(), "预扫查开始");
-        }
-        else if (req->command == kPreScanEnd) {
-            // 预扫查结束：点云已加载才算完成
-            if (generator_.IsInitialized()) {
-                prescan_done_ = true;
-                res->success = true;
-                res->message = "pre_scan done";
-                publish_event(RusUtils::EventName::kPreScanDone, true, "pre_scan done", {}, req->client_id);
-                RCLCPP_INFO(get_logger(), "预扫查完成（点云已就绪）");
-            } else {
+        else if (req->command == kPreScanDone) {
+            // 外部（医生完成手动扫查）触发：取最新点云一次性初始化轨迹生成器
+            if (!cloud_cache_ || cloud_cache_->data.empty()) {
                 res->success = false;
-                res->message = "pre_scan failed: 未收到点云数据";
-                publish_event(RusUtils::EventName::kError, false, res->message, {}, req->client_id);
-                RCLCPP_WARN(get_logger(), "预扫查结束但未收到点云数据");
+                res->message = "pre_scan_done failed: 尚未收到点云";
+                RCLCPP_WARN(get_logger(), "%s", res->message.c_str());
+                return;
             }
+            auto cloud = std::make_shared<PclCloud>();
+            pcl::fromROSMsg(*cloud_cache_, *cloud);
+            if (cloud->empty()) {
+                res->success = false;
+                res->message = "pre_scan_done failed: 点云为空";
+                RCLCPP_WARN(get_logger(), "%s", res->message.c_str());
+                return;
+            }
+            if (!generator_.LoadCloud(cloud)) {
+                res->success = false;
+                res->message = "pre_scan_done failed: 点云初始化失败";
+                RCLCPP_ERROR(get_logger(), "%s", res->message.c_str());
+                return;
+            }
+            prescan_done_ = true;
+            res->success = true;
+            res->message = "pre_scan done";
+            RCLCPP_INFO(get_logger(), "预扫查完成，轨迹生成器已初始化（%zu 点）", cloud->size());
         }
         else if (req->command == kQueryPreScanDone) {
-            // 查询预扫查是否完成
+            // 查询预扫查状态（外部 pre_scan_done 指令驱动）
             res->success = true;
             res->result = {prescan_done_ ? 1.0 : 0.0};
             res->message = prescan_done_ ? "pre_scan done" : "pre_scan not done";
@@ -195,10 +204,10 @@ namespace RusSimPlanning {
 
     void PlanningNode::on_cloud(const PointCloud2::SharedPtr msg)
     {
-        auto cloud = std::make_shared<PclCloud>();
-        pcl::fromROSMsg(*msg, *cloud);
-        RCLCPP_INFO(get_logger(), "收到点云：%zu 点", cloud->size());
-        generator_.LoadCloud(cloud);
+        // 只缓存最新点云；收到外部 pre_scan_done 指令后取一次做轨迹生成器初始化
+        if (!msg || msg->data.empty()) return;
+        cloud_cache_ = msg;
+        RCLCPP_DEBUG(get_logger(), "缓存最新点云（等待 pre_scan_done 指令初始化）");
     }
 
     void PlanningNode::on_driver_state(const DriverStateMsg::SharedPtr msg)
@@ -215,7 +224,7 @@ namespace RusSimPlanning {
         state.joint_acc  = to_eig(msg->joint_acc);
         state.effort     = to_eig(msg->effort);
         state.flange_pos = to_eig(msg->flange_pos);
-        state.timestamp  = msg->timestamp;
+        state.timestamp  = rclcpp::Time(msg->header.stamp).seconds();
         interpolator_.SetRobotState(state);
     }
 
@@ -223,11 +232,11 @@ namespace RusSimPlanning {
 
     bool PlanningNode::Plan(uint32_t client_id)
     {
-        // 预扫查门：未完成预扫查则无点云数据，禁止规划
+        // 预扫查门：外部 pre_scan_done 指令完成点云初始化后，才允许规划
         if (!prescan_done_ || !generator_.IsInitialized()) {
-            RCLCPP_WARN(get_logger(), "未完成预扫查（无点云数据），请先 pre_scan_start → pre_scan_end");
+            RCLCPP_WARN(get_logger(), "尚未完成预扫查（等待外部 pre_scan_done 指令）");
             publish_event(RusUtils::EventName::kError, false,
-                "plan failed: 未完成预扫查（无点云数据）", {}, client_id);
+                "plan failed: 未完成预扫查", {}, client_id);
             return false;
         }
         if (!start_pose_ || !goal_pose_) {
@@ -261,9 +270,29 @@ namespace RusSimPlanning {
         }
         RCLCPP_INFO(get_logger(), "规划完成：稀疏 %zu 点 → 稠密 %zu 点",
             waypoints.size(), interpolator_.DenseTrajectory().size());
+        // 规划轨迹发布到 RViz（调试：对比实际执行位姿）
+        publish_planned_path();
         // 规划完成事件（关联 plan 指令）
         publish_event(RusUtils::EventName::kPlanDone, true, "plan done", {}, client_id);
         return true;
+    }
+
+    void PlanningNode::publish_planned_path()
+    {
+        const auto& dense = interpolator_.DenseTrajectory();
+        if (dense.empty()) return;
+        auto msg = std::make_shared<geometry_msgs::msg::PoseArray>();
+        msg->header.stamp = this->now();
+        msg->header.frame_id = "base_link";
+        // 抽稀到约 40 点，避免 RViz PoseArray 显示过密
+        const size_t step = (dense.size() / 40) > 0 ? (dense.size() / 40) : 1;
+        for (size_t i = 0; i < dense.size(); i += step) {
+            msg->poses.push_back(dense[i]);
+        }
+        if (msg->poses.empty() || msg->poses.back() != dense.back()) {
+            msg->poses.push_back(dense.back());
+        }
+        path_pub_->publish(*msg);
     }
 
     // ---- Execute / servo_tick — 伺服执行：按 servo_rate_hz 逐点下发 ----
@@ -292,27 +321,25 @@ namespace RusSimPlanning {
         // 回到轨迹起点重新执行
         interpolator_.Rewind();
 
-        // 开启驱动伺服模式；成功后启动逐点下发定时器
-        auto req = std::make_shared<CommandService::Request>();
-        req->client_id = 0;
-        req->command = "servo_start";
-        driver_cmd_client_->async_send_request(req,
-            [this](rclcpp::Client<CommandService>::SharedFuture future) {
-                try {
-                    auto res = future.get();
-                    if (!res->success) {
-                        RCLCPP_ERROR(get_logger(), "servo_start 失败：%s", res->message.c_str());
-                        return;
-                    }
-                } catch (const std::exception& e) {
-                    RCLCPP_ERROR(get_logger(), "servo_start 异常：%s", e.what());
-                    return;
-                }
-                executing_ = true;
-                start_servo_timer();
-                RCLCPP_INFO(get_logger(), "伺服执行开始 @ %.0fHz，轨迹 %zu 点",
-                    servo_rate_hz_, interpolator_.DenseTrajectory().size());
-            });
+        // 先 movel 到轨迹起点（异步等待到达，不阻塞服务回调），到达后自动进入伺服
+        const Pose& start_pose = dense.front();
+        double rx = 0.0, ry = 0.0, rz = 0.0;
+        PoseToRPY(start_pose, rx, ry, rz);
+        RCLCPP_INFO(get_logger(),
+            "先 movel 到起点 (%.3f, %.3f, %.3f, %.3f, %.3f, %.3f)...",
+            start_pose.position.x, start_pose.position.y, start_pose.position.z,
+            rx, ry, rz);
+        send_cmd_async("movel",
+            {start_pose.position.x, start_pose.position.y, start_pose.position.z,
+             rx, ry, rz});
+
+        movel_deadline_ = this->now() + rclcpp::Duration::from_seconds(movel_timeout_sec_);
+        if (!movel_wait_timer_) {
+            movel_wait_timer_ = create_wall_timer(std::chrono::milliseconds(100),
+                std::bind(&PlanningNode::on_movel_wait_tick, this));
+        } else {
+            movel_wait_timer_->reset();
+        }
         return true;
     }
 
@@ -449,6 +476,60 @@ namespace RusSimPlanning {
         req->command = cmd;
         req->args = args;
         driver_cmd_client_->async_send_request(req);
+    }
+
+    void PlanningNode::on_movel_wait_tick()
+    {
+        // 超时：直接进入伺服（容错）
+        if (this->now() > movel_deadline_) {
+            if (movel_wait_timer_) movel_wait_timer_->cancel();
+            RCLCPP_WARN(get_logger(), "movel 到达起点超时（%.1fs），仍尝试伺服执行",
+                        movel_timeout_sec_);
+            start_servo_sequence();
+            return;
+        }
+
+        // 异步查询驱动 is_motion_done（响应由 executor 处理，不阻塞任何回调）
+        auto req = std::make_shared<CommandService::Request>();
+        req->client_id = 0;
+        req->command = std::string(RusUtils::CmdName::kIsMotionDone);
+        driver_cmd_client_->async_send_request(req,
+            [this](rclcpp::Client<CommandService>::SharedFuture future) {
+                try {
+                    auto res = future.get();
+                    if (res->success && !res->result.empty() && res->result[0] > 0.5) {
+                        if (movel_wait_timer_) movel_wait_timer_->cancel();
+                        RCLCPP_INFO(get_logger(), "movel 已到达起点");
+                        start_servo_sequence();
+                    }
+                } catch (const std::exception& e) {
+                    RCLCPP_WARN(get_logger(), "is_motion_done 查询异常：%s", e.what());
+                }
+            });
+    }
+
+    void PlanningNode::start_servo_sequence()
+    {
+        auto req = std::make_shared<CommandService::Request>();
+        req->client_id = 0;
+        req->command = "servo_start";
+        driver_cmd_client_->async_send_request(req,
+            [this](rclcpp::Client<CommandService>::SharedFuture future) {
+                try {
+                    auto res = future.get();
+                    if (!res->success) {
+                        RCLCPP_ERROR(get_logger(), "servo_start 失败：%s", res->message.c_str());
+                        return;
+                    }
+                } catch (const std::exception& e) {
+                    RCLCPP_ERROR(get_logger(), "servo_start 异常：%s", e.what());
+                    return;
+                }
+                executing_ = true;
+                start_servo_timer();
+                RCLCPP_INFO(get_logger(), "伺服执行开始 @ %.0fHz，轨迹 %zu 点",
+                    servo_rate_hz_, interpolator_.DenseTrajectory().size());
+            });
     }
 
     // ---- publish_event — 发布模块事件（→ /module_events，bridge 转发前端 event） ----

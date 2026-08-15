@@ -89,7 +89,8 @@ namespace RusDriverNode {
         msg->joint_acc  = to_vec(state.joint_acc);
         msg->effort     = to_vec(state.effort);
         msg->flange_pos = to_vec(state.flange_pos);
-        msg->timestamp  = state.timestamp;
+        msg->header.stamp = now();          // 标准时间戳（与 /joint_states 一致）
+        msg->header.frame_id = "base_link";
 
         state_pub_->publish(std::move(msg));
 

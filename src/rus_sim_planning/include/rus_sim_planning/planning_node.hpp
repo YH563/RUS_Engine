@@ -31,6 +31,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <geometry_msgs/msg/pose.hpp>
+#include <geometry_msgs/msg/pose_array.hpp>
+#include <geometry_msgs/msg/pose.hpp>
 
 #include "rus_sim_interfaces/msg/module_event.hpp"
 #include "rus_sim_interfaces/msg/robot_state.hpp"
@@ -38,6 +40,7 @@
 
 #include "rus_sim_planning/trajectory_generator.hpp"
 #include "rus_sim_planning/trajectory_interpolator.hpp"
+#include "rus_sim_utils/utils.hpp"
 
 namespace RusSimPlanning {
 
@@ -127,6 +130,9 @@ namespace RusSimPlanning {
         void start_servo_timer();                           // 启动 / 复位伺服定时器
         void send_servo_cart(const geometry_msgs::msg::Pose& pose);
         void send_cmd_async(const std::string& cmd, const std::vector<double>& args);
+        void on_movel_wait_tick();     // 定时器：轮询驱动 is_motion_done（movel 到达起点）
+        void start_servo_sequence();   // servo_start → 启动伺服定时器
+        void publish_planned_path();   // 规划轨迹发布到 RViz（PoseArray，调试用）
 
         // ── 事件发布（→ /module_events，bridge 订阅后广播为前端 event）──
         void publish_event(std::string_view event, bool success,
@@ -140,11 +146,13 @@ namespace RusSimPlanning {
         std::string driver_command_service_;
         double servo_rate_hz_ = 125.0;    // 伺服指令发布频率 [Hz]
         int interpolate_points_ = 10;     // 每段插值点数
+        double movel_timeout_sec_ = 10.0; // 执行前 movel 到起点的超时（s）
 
         std::optional<geometry_msgs::msg::Pose> start_pose_;
         std::optional<geometry_msgs::msg::Pose> goal_pose_;
-        bool prescan_done_ = false;             // 预扫查是否完成（点云已就绪）
+        bool prescan_done_ = false;             // 预扫查是否完成（外部 pre_scan_done 指令驱动）
         uint32_t execute_client_id_ = 0;        // execute 指令的 client_id（scan_done 事件关联）
+        sensor_msgs::msg::PointCloud2::SharedPtr cloud_cache_;  // 最新点云缓存（pre_scan_done 时取一次初始化）
 
         // ── 核心模块 ──
         TrajectoryGenerator generator_;        // 轨迹生成模块
@@ -159,7 +167,10 @@ namespace RusSimPlanning {
         rclcpp::Client<rus_sim_interfaces::srv::CommandService>::SharedPtr driver_cmd_client_;
         rclcpp::Service<rus_sim_interfaces::srv::CommandService>::SharedPtr cmd_server_;
         rclcpp::TimerBase::SharedPtr servo_timer_;
+        rclcpp::TimerBase::SharedPtr movel_wait_timer_;  // movel 到起点轮询定时器（异步，不阻塞服务回调）
+        rclcpp::Time movel_deadline_;                    // movel 等待超时时刻
         rclcpp::Publisher<rus_sim_interfaces::msg::ModuleEvent>::SharedPtr event_pub_;
+        rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr path_pub_;  // 规划轨迹可视化（RViz 调试）
     };
 
 }  // namespace RusSimPlanning

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <Eigen/SVD>
 
@@ -160,7 +161,18 @@ namespace RusRobotDriver {
 
         // IK 求解（KinematicsSolver 内部处理法兰偏移补偿）
         IKS::IK_Solution ik = kinematics_->InverseKinematics(T);
+        if (prev_q_des_.size() == 0) {
+            // 首帧：打印目标位姿与 IK 解数（调试 movel 到位问题）
+            const Eigen::Matrix3d Rr = T.block<3,3>(0, 0);
+            const Eigen::Quaterniond qq(Rr);
+            std::fprintf(stderr,
+                "[PlannedSegment] 首帧: target pos(%.3f, %.3f, %.3f) quat(%.3f,%.3f,%.3f,%.3f) IK解数=%zu\n",
+                T(0,3), T(1,3), T(2,3), qq.x(), qq.y(), qq.z(), qq.w(), ik.Q.size());
+        }
         if (ik.Q.empty()) {
+            std::fprintf(stderr,
+                "[PlannedSegment] WARN: IK 无解（目标 pos %.3f,%.3f,%.3f），保持当前位置\n",
+                T(0,3), T(1,3), T(2,3));
             target.q_des   = state.joint_pos;
             target.qd_des  = VectorXd::Zero(state.joint_pos.size());
             target.qdd_des = VectorXd::Zero(state.joint_pos.size());
@@ -178,6 +190,15 @@ namespace RusRobotDriver {
             return target;
         }
         target.q_des = q_curr;
+        if (prev_q_des_.size() == 0) {
+            // 首帧 FK 校验：解出的关节角 → 末端位姿 vs 目标
+            const Eigen::Matrix4d T_ik = kinematics_->ForwardKinematics(q_curr);
+            const Eigen::Vector3d err = T_ik.block<3,1>(0,3) - T.block<3,1>(0,3);
+            std::fprintf(stderr,
+                "[PlannedSegment] 解出 q(%.3f,%.3f,%.3f,%.3f,%.3f,%.3f) FK pos(%.3f,%.3f,%.3f) 位置误差=%.4f m\n",
+                q_curr(0), q_curr(1), q_curr(2), q_curr(3), q_curr(4), q_curr(5),
+                T_ik(0,3), T_ik(1,3), T_ik(2,3), err.norm());
+        }
 
         // ---- 解析速度：qd = J⁻¹ · twist（动态阻尼 DLS） ----
         Eigen::MatrixXd J = kinematics_->NumericalJacobian(q_curr);
