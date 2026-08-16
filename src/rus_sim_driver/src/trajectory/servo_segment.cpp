@@ -58,16 +58,6 @@ namespace RusRobotDriver {
         // 执行二阶滤波
         apply_filter(dt);
 
-        // debug（低频 + 仅在偏差大时）：目标 q_raw vs 实际 q_filt 是否脱节
-        {
-            static int dbg_cnt = 0;
-            if ((dbg_cnt++ % 500) == 0) {  // 1kHz → ~2 次/秒
-                double dmax = (q_raw_ - q_filt_).lpNorm<Eigen::Infinity>();
-                if (dmax > 0.05)
-                    std::fprintf(stderr, "[ServoSegment] 目标-实际关节偏差大: %.3f rad\n", dmax);
-            }
-        }
-
         ControlTarget target;
         target.q_des   = q_filt_;
         target.qd_des  = qd_filt_;

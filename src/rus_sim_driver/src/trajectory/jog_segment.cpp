@@ -94,10 +94,11 @@ namespace RusRobotDriver {
             if (motion_type_ == MOTION_TYPE_JOG_1) {
                 dir = Eigen::Vector3d::Unit(axis_idx);
             } else {
-                // 旋转矩阵列：col(0)=X, col(1)=-Z, col(2)=Y
-                static const int j2_col[] = {0, 2, 1};  // X→col0, Y→col2, Z→col1
-                dir = T.block<3, 3>(0, 0).col(j2_col[axis_idx]);
-                if (axis_idx == 2) dir = -dir;  // col(1) = -Z → 取反得 +Z
+                // JOG_2（工具坐标系）：直接取 FK 末端坐标系的坐标轴
+                // （旧代码的 col 映射 {0,2,1} 是对错误 EAIK 姿态基准 R6T=Identity 的
+                //   补偿；R6T 修正为 URDF 初始姿态后 FK 已正确，映射须移除，否则绕
+                //   工具 Y/Z 互换（z/y 反））
+                dir = T.block<3, 3>(0, 0).col(axis_idx);
             }
             T.block<3, 1>(0, 3) += step_mag * dir;
         } else {
@@ -107,9 +108,9 @@ namespace RusRobotDriver {
             if (motion_type_ == MOTION_TYPE_JOG_1) {
                 axis = Eigen::Vector3d::Unit(rot_idx);
             } else {
-                static const int j2_col[] = {0, 2, 1};  // Rx→col0, Ry→col2, Rz→col1
-                axis = T.block<3, 3>(0, 0).col(j2_col[rot_idx]);
-                if (rot_idx == 2) axis = -axis;  // col(1) = -Z → 取反得 +Z 旋转轴
+                // JOG_2（工具坐标系）：直接取 FK 末端坐标系的坐标轴
+                // （同上：移除旧 Y/Z 互换补偿）
+                axis = T.block<3, 3>(0, 0).col(rot_idx);
             }
             Eigen::AngleAxisd rot(step_mag, axis);
             T.block<3, 3>(0, 0) = rot.toRotationMatrix() * T.block<3, 3>(0, 0);
@@ -134,22 +135,16 @@ namespace RusRobotDriver {
                 Eigen::Vector3d dir;
                 if (motion_type_ == MOTION_TYPE_JOG_1)
                     dir = Eigen::Vector3d::Unit(axis_idx);
-                else {
-                    static const int j2_col[] = {0, 2, 1};
-                    dir = T.block<3, 3>(0, 0).col(j2_col[axis_idx]);
-                    if (axis_idx == 2) dir = -dir;
-                }
+                else
+                    dir = T.block<3, 3>(0, 0).col(axis_idx);   // JOG_2：工具系坐标轴
                 twist.segment<3>(0) = vel * dir;
             } else {
                 Eigen::Vector3d axis;
                 int rot_idx = axis_idx - 3;
                 if (motion_type_ == MOTION_TYPE_JOG_1)
                     axis = Eigen::Vector3d::Unit(rot_idx);
-                else {
-                    static const int j2_col[] = {0, 2, 1};
-                    axis = T.block<3, 3>(0, 0).col(j2_col[rot_idx]);
-                    if (rot_idx == 2) axis = -axis;
-                }
+                else
+                    axis = T.block<3, 3>(0, 0).col(rot_idx);   // JOG_2：工具系坐标轴
                 twist.segment<3>(3) = vel * axis;
             }
 
