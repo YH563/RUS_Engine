@@ -6,10 +6,6 @@
 //  并随机挑两个点作为起始点（间距保证 > 0.15m），写入起终点文件。
 //
 //  用法：
-//    ros2 run rus_sim_perception rus_sim_gen_test_cloud [点云路径] [起终点文件] [随机种子]
-//    （默认 /tmp/test_cloud.pcd、/tmp/test_cloud_poses.txt；种子省略则每次随机）
-//    固定种子可复现同一组起终点（例如 42）：
-//      ros2 run rus_sim_perception rus_sim_gen_test_cloud /tmp/test_cloud.pcd /tmp/test_cloud_poses.txt 42
 // ════════════════════════════════════════════════════════════════════
 
 #include <cmath>
@@ -25,9 +21,6 @@ int main(int argc, char** argv)
 {
     const std::string cloud_path = argc > 1 ? argv[1] : "/tmp/test_cloud.pcd";
     const std::string poses_path = argc > 2 ? argv[2] : "/tmp/test_cloud_poses.txt";
-    // 可选随机种子：固定后起终点可复现（便于对比不同配置下的同一段轨迹）
-    const unsigned seed = argc > 3 ? static_cast<unsigned>(std::stoul(argv[3]))
-                                   : static_cast<unsigned>(std::random_device{}());
 
     RusPerception::CloudRGB cloud;
 
@@ -50,11 +43,9 @@ int main(int argc, char** argv)
     const bool ok = RusPerception::PointCloud::SavePcd(cloud_path, cloud);
     std::printf("已生成 %s（%zu 点，无障碍，x∈[-0.5,0] y∈[-0.3,0.3] z∈[-0.1,0.1]）\n",
                 cloud_path.c_str(), cloud.size());
-    std::printf("随机种子: %u（复现起终点请加第 3 参）\n", seed);
     if (!ok) return 1;
 
     // 随机挑两个点作为起始点（保证间距足够，避免路径退化）
-    std::mt19937 gen(seed);
     std::uniform_int_distribution<size_t> dist(0, cloud.size() - 1);
     size_t i_start = 0, i_goal = 0;
     for (int attempt = 0; attempt < 200; ++attempt) {

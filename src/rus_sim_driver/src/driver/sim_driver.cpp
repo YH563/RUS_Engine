@@ -339,6 +339,21 @@ namespace RusSimRobotDriver {
         current_state_.flange_pos(3) = std::atan2(R(2, 1), R(2, 2));
         current_state_.flange_pos(4) = std::asin(-R(2, 0));
         current_state_.flange_pos(5) = std::atan2(R(1, 0), R(0, 0));
+
+        // debug: EAIK FK vs MuJoCo FK（验证两个运动学模型是否一致）
+        {
+            static int dbg_cnt = 0;
+            if ((dbg_cnt++ % 30) == 0) {  // 125Hz 控制环 → ~4 次/秒
+                const Eigen::Matrix4d T_eik = ki_model_->fwdkin_Eigen(current_state_.joint_pos);
+                const Eigen::Vector3d p_eik = T_eik.block<3,1>(0, 3);
+                const Eigen::Vector3d p_mj(px[0], px[1], px[2]);
+                std::fprintf(stderr,
+                    "[sync_state] EAIK pos(%.3f,%.3f,%.3f)  mujoco pos(%.3f,%.3f,%.3f)  偏差=%.4f m\n",
+                    p_eik.x(), p_eik.y(), p_eik.z(),
+                    p_mj.x(), p_mj.y(), p_mj.z(),
+                    (p_eik - p_mj).norm());
+            }
+        }
     }
 
     // ---- control_loop — 实时控制循环 ----
