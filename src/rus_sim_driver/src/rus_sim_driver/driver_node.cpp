@@ -20,6 +20,10 @@ namespace RusDriverNode {
                 RusRobotDriver::DriverFactory::Real, robot_ip);
             is_sim_ = false;
             RCLCPP_INFO(get_logger(), "创建真实驱动, ip=%s", robot_ip.c_str());
+            if (!driver_ || !driver_->IsConnected()) {
+                RCLCPP_ERROR(get_logger(),
+                    "真实驱动连接失败 ip=%s（请检查网线/机器人电源/示教器使能状态）", robot_ip.c_str());
+            }
         }
 
         // ── Service: /driver/command ──
@@ -173,11 +177,23 @@ namespace RusDriverNode {
             },
             [&](const IsMotionDoneCmd&)  { result = {driver_->IsMotionDone() ? 1.0 : 0.0}; return true; },
 
-            // ── 仿真控制（仅 Sim 驱动） ──
-            [&](const SetTimeSpeedCmd& s)  { sim_driver().SetTimeSpeed(s.speed); return true; },
-            [&](const GetTimeSpeedCmd&)    { result = {sim_driver().GetTimeSpeed()}; return true; },
-            [&](const GetSimTimeCmd&)      { result = {sim_driver().GetSimTime()}; return true; },
-            [&](const StepOnceCmd&)        { sim_driver().StepOnce(); return true; },
+            // ── 仿真控制（仅 Sim 驱动有效；真实驱动下返回失败，避免非法向下转型） ──
+            [&](const SetTimeSpeedCmd& s)  {
+                if (!is_sim_) return false;
+                sim_driver().SetTimeSpeed(s.speed); return true;
+            },
+            [&](const GetTimeSpeedCmd&)    {
+                if (!is_sim_) return false;
+                result = {sim_driver().GetTimeSpeed()}; return true;
+            },
+            [&](const GetSimTimeCmd&)      {
+                if (!is_sim_) return false;
+                result = {sim_driver().GetSimTime()}; return true;
+            },
+            [&](const StepOnceCmd&)        {
+                if (!is_sim_) return false;
+                sim_driver().StepOnce(); return true;
+            },
             [&](const GetFrameRateCmd&)     {
                 if (is_sim_) {
                     result = {sim_driver().GetFrameRate()};
@@ -260,6 +276,11 @@ namespace RusDriverNode {
 
         is_sim_   = new_is_sim;
         robot_ip_ = ip;
+
+        if (!new_is_sim && !driver_->IsConnected()) {
+            RCLCPP_ERROR(get_logger(),
+                "真实驱动连接失败 ip=%s（请检查网线/机器人电源/示教器使能状态）", ip.c_str());
+        }
 
         RCLCPP_INFO(get_logger(), "驱动已切换为 %s (ip=%s)", type_str, ip.c_str());
         return true;

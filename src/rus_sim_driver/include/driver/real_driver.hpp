@@ -17,7 +17,11 @@ namespace RusRealRobotDriver {
         ~RobotRealDriver() override = default;
 
         // 连接机械臂
-        int Connect(const std::string& ip) override{ return robot.RPC(ip.c_str()); }
+        int Connect(const std::string& ip) override{
+            int rtn = robot.RPC(ip.c_str());
+            is_connected_.store(rtn == 0);
+            return rtn;
+        }
 
         // 断开与机械臂的连接
         int Disconnect() override{ 
@@ -27,6 +31,8 @@ namespace RusRealRobotDriver {
         }
 
         // 检查是否连接
+        // 说明：SDK 的 IsSockError() 为私有接口，无法直接调用；
+        // 连接状态由 Connect/Disconnect 维护的 is_connected_ 标志位跟踪。
         bool IsConnected() const override{return is_connected_.load();}
 
         // 查询是否在示教模式，state 0-非拖动示教模式，1-拖动示教模式
@@ -91,7 +97,11 @@ namespace RusRealRobotDriver {
     private:
 
         // 私有成员变量
-        FRRobot robot;  // 机器人，用于获取真实机械臂状态
+        // robot 声明为 mutable：IsMotionDone 等 const 接口内部需要
+        // 调用非 const 的 SDK 查询方法（GetRobotMotionDone）。
+        mutable FRRobot robot;  // 机器人，用于获取真实机械臂状态
         std::atomic<bool> is_connected_{false};  // 是否连接
+        std::atomic<bool> is_servo_enabled_{false};  // 伺服模式是否已开启（ServoMoveStart/End 维护）
+        uint8_t last_jog_ref_{0};  // 最近一次点动的 SDK ref（StopJOGDecel 用），0=关节点动
     };
 }
