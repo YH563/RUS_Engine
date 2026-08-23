@@ -1,4 +1,5 @@
 #include "rus_sim_driver/driver_node.hpp"
+#include "driver/real_driver.hpp"
 
 namespace RusDriverNode {
 
@@ -21,8 +22,16 @@ namespace RusDriverNode {
             is_sim_ = false;
             RCLCPP_INFO(get_logger(), "创建真实驱动, ip=%s", robot_ip.c_str());
             if (!driver_ || !driver_->IsConnected()) {
+                // 读取真实驱动最近的 RPC 错误码，帮助定位连接失败原因
+                int rpc_err = 0;
+                if (driver_) {
+                    if (auto* real = dynamic_cast<RusRealRobotDriver::RobotRealDriver*>(driver_.get()))
+                        rpc_err = real->LastRpcError();
+                }
                 RCLCPP_ERROR(get_logger(),
-                    "真实驱动连接失败 ip=%s（请检查网线/机器人电源/示教器使能状态）", robot_ip.c_str());
+                    "真实驱动连接失败 ip=%s rpc_err=%d（若错误码为 -2/-3 且 SDK 日志报 'error SDK version'，"
+                    "说明 SDK 与控制器固件版本不匹配，请更换与控制器固件匹配的 SDK 版本）",
+                    robot_ip.c_str(), rpc_err);
             }
         }
 
@@ -278,8 +287,14 @@ namespace RusDriverNode {
         robot_ip_ = ip;
 
         if (!new_is_sim && !driver_->IsConnected()) {
+            // 读取真实驱动最近的 RPC 错误码，帮助定位连接失败原因
+            int rpc_err = 0;
+            if (auto* real = dynamic_cast<RusRealRobotDriver::RobotRealDriver*>(driver_.get()))
+                rpc_err = real->LastRpcError();
             RCLCPP_ERROR(get_logger(),
-                "真实驱动连接失败 ip=%s（请检查网线/机器人电源/示教器使能状态）", ip.c_str());
+                "真实驱动连接失败 ip=%s rpc_err=%d（若错误码为 -2/-3 且 SDK 日志报 'error SDK version'，"
+                "说明 SDK 与控制器固件版本不匹配，请更换与控制器固件匹配的 SDK 版本）",
+                ip.c_str(), rpc_err);
         }
 
         RCLCPP_INFO(get_logger(), "驱动已切换为 %s (ip=%s)", type_str, ip.c_str());

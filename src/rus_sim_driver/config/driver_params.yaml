@@ -3,10 +3,10 @@
     # ── 驱动类型 ──
     # "sim"  — 仿真驱动（默认，配合 RobotSimDriver）
     # "real" — 真实机器人驱动（需设置 robot_ip）
-    driver_type: "sim"
+    driver_type: "real"
 
     # ── 机器人 IP（仅 real 模式需要） ──
-    robot_ip: ""
+    robot_ip: "192.168.58.2"
 
     # ── 录制 / 回放 / 脚本文件路径 ──
     script_path:   ""

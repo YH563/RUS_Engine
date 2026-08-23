@@ -3,6 +3,7 @@
 #include "robot_types.h"
 
 #include <cmath>
+#include <cstdio>
 
 namespace RusRealRobotDriver {
 
@@ -12,6 +13,19 @@ namespace RusRealRobotDriver {
         constexpr double kRad2Deg = 180.0 / M_PI;   // 弧度 → 度
         constexpr double kMm2M    = 1.0 / 1000.0;   // 毫米 → 米
         constexpr double kM2Mm    = 1000.0;         // 米 → 毫米
+
+        // RPC/SDK 错误码 → 可读描述（用于连接失败诊断）
+        const char* rpc_error_str(int err)
+        {
+            switch (err) {
+                case 0:                return "ERR_SUCCESS 成功";
+                case ERR_OTHER:        return "ERR_OTHER 其他错误";
+                case ERR_SOCKET_COM_FAILED:  return "ERR_SOCKET_COM_FAILED 网络通讯异常（常见原因：SDK 与控制器固件版本不匹配，SDK 内部会报 'error SDK version'）";
+                case ERR_XMLRPC_COM_FAILED:  return "ERR_XMLRPC_COM_FAILED XMLRPC 通讯失败，请检查网络连接以及服务器IP地址是否正确";
+                case ERR_XMLRPC_CMD_FAILED:  return "ERR_XMLRPC_CMD_FAILED XMLRPC 接口执行失败";
+                default: return "未知错误码";
+            }
+        }
 
         // SDK 状态（fairino）→ 通用 RobotState；角度 度 → 弧度，位置 mm → m
         RusRobotDriver::RobotState convert_sdk_state(
@@ -45,10 +59,32 @@ namespace RusRealRobotDriver {
         // 注意：FRRobot 成员由成员构造自动默认构造，绝不能再次 `robot = FRRobot();`。
         // FRRobot 内部持有原始指针（FRTcpClient*）与 socket 缓冲，默认拷贝赋值会
         // 造成临时对象析构后成员悬垂，导致堆内存损坏（malloc: unaligned tcache chunk）。
-        // Connect 内部会更新 is_connected_，连接失败时调用方可通过 IsConnected() 检查
+
+        // 对齐官方示例：先初始化 SDK 日志并设置过滤级别（1=error）。
+        // 未调用 LoggerInit 时 SDK 内部错误（如 RecvPkg 的 "error SDK version"）
+        // 不会输出，连接失败将无法定位根因。
+        robot.LoggerInit();
+        robot.SetLoggerLevel(1);
+
+        // Connect 内部会更新 is_connected_ 与 last_rpc_error_，
+        // 连接失败时调用方可通过 IsConnected() / LastRpcError() 检查原因
         Connect(ip);
         // 开启 SDK 自动重连：断线后每 500ms 尝试重连，最长 30s
         robot.SetReConnectParam(true, 30000, 500);
+    }
+
+    int RobotRealDriver::Connect(const std::string& ip)
+    {
+        int rtn = robot.RPC(ip.c_str());
+        last_rpc_error_.store(rtn);
+        is_connected_.store(rtn == 0);
+        if (rtn != 0) {
+            // 直接输出到 stderr：驱动库不依赖 rclcpp，连接失败信息必须可见
+            fprintf(stderr,
+                "[RobotRealDriver] RPC 连接失败 ip=%s 错误码=%d (%s)\n",
+                ip.c_str(), rtn, rpc_error_str(rtn));
+        }
+        return rtn;
     }
 
     int RobotRealDriver::GetCurrentState(uint8_t flag, RobotState& robot_state)
@@ -175,14 +211,28 @@ namespace RusRealRobotDriver {
         uint8_t ref = static_cast<uint8_t>((jog_command.type - RusRobotDriver::MOTION_TYPE_JOG_0) * 2);
         last_jog_ref_ = ref;  // 记录本次点动参考系，供 StopJOGDecel 使用
 
-        return robot.StartJOG(
-            ref,
-            jog_command.jog_axis,
-            jog_command.jog_dir,
-            static_cast<float>(jog_command.speed * 100.0),
-            static_cast<float>(jog_command.acceleration * 100.0),
-            static_cast<float>(jog_command.jog_max_dis)
-        );
+        // ⚠️ 平台语义「jog_max_dis=0 表示无限制」与 SDK 的 max_dis（单次点动最大位移[°或mm]）冲突：
+        // 官方示例 TestJOG 一律传 30.0；若传 0，控制器会视为「单次位移上限 = 0」→ 机械臂不动。
+        // 此处对 <=0 兜底为官方示例默认值，保证点动可动（运动过程由 ImmStopJOG/StopJOG 或 max_dis 上限停止）。
+        float max_dis = static_cast<float>(jog_command.jog_max_dis);
+        if (max_dis <= 0.0f) {
+            max_dis = 30.0f;
+            fprintf(stderr,
+                "[RobotRealDriver] 警告: jog_max_dis=%.1f 在 SDK 中被解释为位移上限 0（机械臂不动），"
+                "已兜底为 %.1f°（请前端传有效 max_dis）\n",
+                static_cast<float>(jog_command.jog_max_dis), max_dis);
+        }
+
+        float vel = static_cast<float>(jog_command.speed * 100.0);
+        float acc = static_cast<float>(jog_command.acceleration * 100.0);
+
+        int rtn = robot.StartJOG(ref, jog_command.jog_axis, jog_command.jog_dir, vel, acc, max_dis);
+        if (rtn != 0) {
+            fprintf(stderr,
+                "[RobotRealDriver] StartJOG(ref=%u, nb=%u, dir=%u, vel=%.1f, acc=%.1f, max_dis=%.1f) 失败 错误码=%d\n",
+                ref, jog_command.jog_axis, jog_command.jog_dir, vel, acc, max_dis, rtn);
+        }
+        return rtn;
     }
 
     // 减速停止点动
@@ -190,14 +240,21 @@ namespace RusRealRobotDriver {
     {
         if (!is_connected_.load()) return -1;
         // SDK 停止 ref = 启动 ref + 1：关节 1 / 基坐标系 3 / 工具坐标系 5
-        return robot.StopJOG(static_cast<uint8_t>(last_jog_ref_ + 1));
+        uint8_t stop_ref = static_cast<uint8_t>(last_jog_ref_ + 1);
+        int rtn = robot.StopJOG(stop_ref);
+        if (rtn != 0)
+            fprintf(stderr, "[RobotRealDriver] StopJOG(%u) 失败 错误码=%d\n", stop_ref, rtn);
+        return rtn;
     }
 
     // 直接停止点动
     int RobotRealDriver::StopJOGImmediate()
     {
         if (!is_connected_.load()) return -1;
-        return robot.ImmStopJOG();
+        int rtn = robot.ImmStopJOG();
+        if (rtn != 0)
+            fprintf(stderr, "[RobotRealDriver] ImmStopJOG 失败 错误码=%d\n", rtn);
+        return rtn;
     }
 
     // 终止运动

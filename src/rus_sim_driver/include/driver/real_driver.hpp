@@ -17,11 +17,10 @@ namespace RusRealRobotDriver {
         ~RobotRealDriver() override = default;
 
         // 连接机械臂
-        int Connect(const std::string& ip) override{
-            int rtn = robot.RPC(ip.c_str());
-            is_connected_.store(rtn == 0);
-            return rtn;
-        }
+        int Connect(const std::string& ip) override;
+
+        // 最近一次 RPC 调用的错误码（0=成功，-2=网络通讯异常，-3=XMLRPC 通讯失败等）
+        int LastRpcError() const { return last_rpc_error_; }
 
         // 断开与机械臂的连接
         int Disconnect() override{ 
@@ -102,6 +101,7 @@ namespace RusRealRobotDriver {
         mutable FRRobot robot;  // 机器人，用于获取真实机械臂状态
         std::atomic<bool> is_connected_{false};  // 是否连接
         std::atomic<bool> is_servo_enabled_{false};  // 伺服模式是否已开启（ServoMoveStart/End 维护）
+        std::atomic<int> last_rpc_error_{0};  // 最近一次 RPC 错误码（供上层诊断连接失败原因）
         uint8_t last_jog_ref_{0};  // 最近一次点动的 SDK ref（StopJOGDecel 用），0=关节点动
     };
 }
