@@ -66,6 +66,11 @@ namespace RusUtils {
         inline constexpr std::string_view kStepOnce         = "step_once";
         inline constexpr std::string_view kGetFrameRate     = "get_frame_rate";
 
+        // ── 工具坐标系 / 标定 ──
+        inline constexpr std::string_view kSetToolCalibPoint = "set_tool_calib_point";
+        inline constexpr std::string_view kComputeToolCalib  = "compute_tool_calib";
+        inline constexpr std::string_view kSetToolCoord      = "set_tool_coord";
+
         // 感知控制指令：通道已预留（WsPath::kSensor），指令待后续设计，暂不定义
     }
 

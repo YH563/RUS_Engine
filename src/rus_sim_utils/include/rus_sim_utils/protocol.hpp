@@ -108,6 +108,8 @@ namespace RusUtils {
         std::vector<double> joint_acc;
         std::vector<double> effort;
         std::vector<double> flange_pos;
+        int tool_index = 0;          // 当前工具坐标系索引（0~14）
+        std::vector<double> tool_pose;  // 当前 TCP 位姿（基坐标系下）XYZABC [m/rad]
     };
 
     // ════════════════════════════════════════════════════════════════
@@ -280,7 +282,9 @@ namespace RusUtils {
                ",\"joint_vel\":" + detail::arr_to_json(s.joint_vel) +
                ",\"joint_acc\":" + detail::arr_to_json(s.joint_acc) +
                ",\"effort\":" + detail::arr_to_json(s.effort) +
-               ",\"flange_pos\":" + detail::arr_to_json(s.flange_pos) + "}";
+               ",\"flange_pos\":" + detail::arr_to_json(s.flange_pos) +
+               ",\"tool_index\":" + std::to_string(s.tool_index) +
+               ",\"tool_pose\":" + detail::arr_to_json(s.tool_pose) + "}";
     }
 
     /// 编码感知帧 → 二进制（uint32 LE 头长度 + JSON 头 + payload）

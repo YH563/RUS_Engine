@@ -113,7 +113,8 @@
 ```json
 { "type": "state", "timestamp": 1234.5, "frame_rate": 125.0,
   "joint_pos": [...], "joint_vel": [...], "joint_acc": [...],
-  "effort": [...], "flange_pos": [...] }
+  "effort": [...], "flange_pos": [...],
+  "tool_index": 0, "tool_pose": [...] }
 ```
 
 | 字段 | 类型 | 说明 |
@@ -122,7 +123,9 @@
 | `timestamp` | double | 驱动侧仿真时间戳（秒） |
 | `frame_rate` | double | 帧率（bridge 按相邻两帧时间差计算） |
 | `joint_pos` / `joint_vel` / `joint_acc` / `effort` | double[] | 6 维关节数组 |
-| `flange_pos` | double[] | 法兰位姿（平移 + 旋转，长度 6） |
+| `flange_pos` | double[] | 法兰位姿（平移 + 旋转，长度 6，m/rad） |
+| `tool_index` | int | 当前工具坐标系索引（0~14，0 表示法兰坐标系） |
+| `tool_pose` | double[] | 当前 TCP 位姿（基坐标系下，长度 6，m/rad） |
 
 - 覆盖式推送：bridge 只保留**最新一帧**，慢客户端丢帧，前端须容忍帧不连续。
 - 数组长度固定为 6（关节 1~6）。

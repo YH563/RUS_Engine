@@ -92,6 +92,17 @@ namespace RusRealRobotDriver {
          * @brief 查询运动是否已完成
          */
         bool IsMotionDone() const override;
+
+        // === 工具坐标系相关接口 ===
+
+        // 六点法标定：记录第 point_num 个工具参考点（1~6，TCP 需对准同一尖点）
+        int SetToolCalibPoint(int point_num) override;
+
+        // 六点法标定：计算工具坐标系（标定计算由 SDK ComputeTool 在控制器内部完成）
+        int ComputeToolCalib(std::vector<double>& tcp_pose) override;
+
+        // 设置工具坐标系（TCP 相对法兰位姿）并生效
+        int SetToolCoord(int id, const std::vector<double>& coord) override;
     
     private:
 

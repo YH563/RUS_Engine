@@ -102,6 +102,8 @@ namespace RusDriverNode {
         msg->joint_acc  = to_vec(state.joint_acc);
         msg->effort     = to_vec(state.effort);
         msg->flange_pos = to_vec(state.flange_pos);
+        msg->tool_index = state.tool_index;
+        msg->tool_pose  = to_vec(state.tool_pose);
         msg->header.stamp = now();          // 标准时间戳（与 /joint_states 一致）
         msg->header.frame_id = "base_link";
 
@@ -232,6 +234,16 @@ namespace RusDriverNode {
                 }
                 return run_script(script_path_);
             },
+
+            // ── 工具坐标系 / 标定 ──
+            [&](const SetToolCalibPointCmd& c) { return driver_->SetToolCalibPoint(c.point_num) == 0; },
+            [&](const ComputeToolCalibCmd&) {
+                std::vector<double> tcp;
+                if (driver_->ComputeToolCalib(tcp) != 0) return false;
+                result = std::move(tcp);
+                return true;
+            },
+            [&](const SetToolCoordCmd& c)     { return driver_->SetToolCoord(c.id, c.coord) == 0; },
 
             [](const auto&) { return false; }  // 兜底
         }, command);

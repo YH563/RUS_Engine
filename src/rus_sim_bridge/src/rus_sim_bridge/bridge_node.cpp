@@ -119,6 +119,8 @@ namespace rus_sim_bridge {
         s.joint_acc = msg->joint_acc;
         s.effort = msg->effort;
         s.flange_pos = msg->flange_pos;
+        s.tool_index = msg->tool_index;
+        s.tool_pose = msg->tool_pose;
 
         const double ts = rclcpp::Time(msg->header.stamp).seconds();
         if (last_state_ts_ > 0.0 && ts > last_state_ts_) {

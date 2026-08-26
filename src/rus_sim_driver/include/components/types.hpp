@@ -65,6 +65,14 @@ namespace RusRobotDriver {
     // ── 文件执行 ──
     struct RunFileCmd       { std::string path; };
 
+    // ── 工具坐标系 / 标定 ──
+    struct SetToolCalibPointCmd { int point_num = 1; };       // 记录第 N 个六点法标定点（1~6）
+    struct ComputeToolCalibCmd  {};                           // 计算工具坐标系（结果写入 result）
+    struct SetToolCoordCmd {                                   // 设置工具坐标系并生效
+        int id = 0;                                           // 坐标系编号 [0~14]
+        std::vector<double> coord;                            // 工具相对法兰位姿 [x,y,z,rx,ry,rz]（m/rad）
+    };
+
     // ── 仿真控制（仅 Sim 驱动） ──
     struct SetTimeSpeedCmd    { double speed; };
     struct GetTimeSpeedCmd    {};
@@ -91,6 +99,9 @@ namespace RusRobotDriver {
 
         // 文件执行
         RunFileCmd,
+
+        // 工具坐标系 / 标定
+        SetToolCalibPointCmd,  ComputeToolCalibCmd,  SetToolCoordCmd,
 
         // 仿真控制
         SetTimeSpeedCmd,   GetTimeSpeedCmd,

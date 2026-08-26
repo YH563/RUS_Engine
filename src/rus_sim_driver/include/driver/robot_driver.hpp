@@ -83,6 +83,36 @@ namespace RusRobotDriver {
 
         // === 工具坐标系相关接口 ===
 
+        /**
+         * @brief 六点法标定：记录第 point_num 个工具参考点（范围 1~6）。
+         *
+         * 调用前需已移动机械臂使 TCP 对准同一标定尖点，SDK 采集当前位姿。
+         * 集齐 6 点后调用 ComputeToolCalib 完成计算。
+         *
+         * @param point_num 点编号 [1~6]
+         * @return 错误码
+         */
+        virtual int SetToolCalibPoint(int point_num) = 0;
+
+        /**
+         * @brief 六点法标定：计算工具坐标系。
+         *
+         * 标定计算完全在驱动内部（真实驱动调用 SDK ComputeTool 完成六点拟合）。
+         *
+         * @param[out] tcp_pose 工具中心点相对末端法兰位姿 [x,y,z,rx,ry,rz]（m/rad）
+         * @return 错误码
+         */
+        virtual int ComputeToolCalib(std::vector<double>& tcp_pose) = 0;
+
+        /**
+         * @brief 设置工具坐标系（工具中心点相对末端法兰位姿）并立即生效。
+         *
+         * @param id    坐标系编号 [0~14]
+         * @param coord 工具相对法兰位姿 [x,y,z,rx,ry,rz]（m/rad）
+         * @return 错误码
+         */
+        virtual int SetToolCoord(int id, const std::vector<double>& coord) = 0;
+
     };
 
     // 采用工厂模式

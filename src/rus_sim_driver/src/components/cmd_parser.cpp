@@ -97,6 +97,22 @@ namespace RusRobotDriver {
         // ── 文件执行（path 由调用方设置） ──
         if (name == kRunFile)        return RunFileCmd{};
 
+        // ── 工具坐标系 / 标定 ──
+        if (name == kSetToolCalibPoint) {
+            SetToolCalibPointCmd cmd;
+            cmd.point_num = args.empty() ? 1 : static_cast<int>(args[0]);
+            return cmd;
+        }
+        if (name == kComputeToolCalib) return ComputeToolCalibCmd{};
+        if (name == kSetToolCoord) {
+            SetToolCoordCmd cmd;
+            cmd.id = args.empty() ? 0 : static_cast<int>(args[0]);
+            // 第 0 位为 id，其余 6 位为 [x,y,z,rx,ry,rz]（m/rad）
+            for (size_t i = 1; i < args.size() && cmd.coord.size() < 6; ++i)
+                cmd.coord.push_back(args[i]);
+            return cmd;
+        }
+
         // ── 仿真控制（仅 Sim 驱动） ──
         if (name == kSetTimeSpeed)   return SetTimeSpeedCmd{args.empty() ? 1.0 : args[0]};
         if (name == kGetTimeSpeed)   return GetTimeSpeedCmd{};

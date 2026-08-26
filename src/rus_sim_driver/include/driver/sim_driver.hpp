@@ -168,6 +168,34 @@ namespace RusSimRobotDriver {
          */
         bool IsMotionDone() const override;
 
+        // === 工具坐标系相关接口 ===
+
+        /**
+         * @brief 六点法标定：记录第 point_num 个工具参考点（1~6）
+         *
+         * 仿真侧无法执行真实六点标定，仅记录当前法兰位姿（占位）。
+         */
+        int SetToolCalibPoint(int point_num) override;
+
+        /**
+         * @brief 六点法标定：计算工具坐标系
+         *
+         * 仿真侧占位：返回当前工具坐标系的变换（tool_transforms_[tool_index_]）。
+         *
+         * @param[out] tcp_pose 工具中心点相对末端法兰位姿 [x,y,z,rx,ry,rz]（m/rad）
+         */
+        int ComputeToolCalib(std::vector<double>& tcp_pose) override;
+
+        /**
+         * @brief 设置工具坐标系（工具中心点相对末端法兰位姿）并生效
+         *
+         * 更新本地 tool_transforms_ 变换矩阵表。
+         *
+         * @param id    坐标系编号 [0~14]
+         * @param coord 工具相对法兰位姿 [x,y,z,rx,ry,rz]（m/rad）
+         */
+        int SetToolCoord(int id, const std::vector<double>& coord) override;
+
         // === 仿真控制 ===
         /**
          * @brief 设置仿真时间倍率
@@ -277,6 +305,7 @@ namespace RusSimRobotDriver {
         // === 工具坐标系变换矩阵 ===
         std::atomic<int> tool_index_{0};  // 工具坐标系索引，默认为0，表示法兰坐标系
         std::vector<Eigen::Matrix4d> tool_transforms_{Eigen::Matrix4d::Identity()};  // 工具坐标系变换矩阵
+        std::vector<Eigen::Matrix4d> calib_points_;  // 六点法标定记录的位姿（仿真占位，SetToolCalibPoint 记录）
 
         // === 线程同步 ===
         uint64_t state_version_{0};

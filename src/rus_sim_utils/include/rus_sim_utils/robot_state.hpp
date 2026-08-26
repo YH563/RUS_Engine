@@ -24,5 +24,9 @@ namespace RusUtils {
         VectorXd joint_acc;   // 关节加速度 [rad/s²]
         VectorXd effort;      // 关节力矩 [Nm]
         double timestamp = 0.0;
+
+        // 工具坐标系信息
+        int tool_index = 0;   // 当前工具坐标系索引 [0~14]，0 表示法兰坐标系
+        VectorXd tool_pose;   // 当前 TCP 位姿（基坐标系下）XYZABC [m/rad]
     };
 }

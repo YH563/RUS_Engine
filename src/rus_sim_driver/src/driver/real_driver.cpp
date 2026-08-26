@@ -30,7 +30,8 @@ namespace RusRealRobotDriver {
         // SDK 状态（fairino）→ 通用 RobotState；角度 度 → 弧度，位置 mm → m
         RusRobotDriver::RobotState convert_sdk_state(
             JointPos& jPos, float speed[6], float acc[6],
-            float torques[6], DescPose& flange, float time_ms)
+            float torques[6], DescPose& flange, int tool_index,
+            const DescPose& tcp, float time_ms)
         {
             RusRobotDriver::RobotState s;
 
@@ -39,6 +40,13 @@ namespace RusRealRobotDriver {
             s.flange_pos << flange.tran.x * kMm2M, flange.tran.y * kMm2M, flange.tran.z * kMm2M,
                 flange.rpy.rx * kDeg2Rad, flange.rpy.ry * kDeg2Rad,
                 flange.rpy.rz * kDeg2Rad;
+
+            // 工具坐标系信息：当前工具号 + TCP 基座位姿（mm/deg → m/rad）
+            s.tool_index = tool_index;
+            s.tool_pose.resize(6);
+            s.tool_pose << tcp.tran.x * kMm2M, tcp.tran.y * kMm2M, tcp.tran.z * kMm2M,
+                tcp.rpy.rx * kDeg2Rad, tcp.rpy.ry * kDeg2Rad,
+                tcp.rpy.rz * kDeg2Rad;
 
             // 关节位置 / 速度 / 加速度，deg / (deg/s) / (deg/s²) → rad / (rad/s) / (rad/s²)
             s.joint_pos = Eigen::Map<Eigen::VectorXd>(jPos.jPos, 6) * kDeg2Rad;
@@ -95,6 +103,8 @@ namespace RusRealRobotDriver {
         float acc[6];
         float torques[6];
         DescPose flange;
+        int tool_index = 0;
+        DescPose tcp;
         float time_ms;
 
         // 任一查询失败立即返回错误码，避免把脏数据当真实状态发布
@@ -108,10 +118,15 @@ namespace RusRealRobotDriver {
         if (ret != 0) return ret;
         ret = robot.GetActualToolFlangePose(flag, &flange);
         if (ret != 0) return ret;
+        // 工具坐标系信息：当前工具号 + TCP 基座位姿（直接读，无需反推）
+        ret = robot.GetActualTCPNum(flag, &tool_index);
+        if (ret != 0) return ret;
+        ret = robot.GetActualTCPPose(flag, &tcp);
+        if (ret != 0) return ret;
         ret = robot.GetSystemClock(&time_ms);
         if (ret != 0) return ret;
 
-        robot_state = convert_sdk_state(jPos, speed, acc, torques, flange, time_ms);
+        robot_state = convert_sdk_state(jPos, speed, acc, torques, flange, tool_index, tcp, time_ms);
         return 0;
     }
 
@@ -302,5 +317,61 @@ namespace RusRealRobotDriver {
         if (robot.GetRobotMotionDone(&state) != 0)
             return false;  // 查询失败视为运动未完成（保守处理）
         return state == 1;  // SDK: 0-未完成，1-完成
+    }
+
+    // ============================================================
+    //  工具坐标系相关接口（六点标定计算完全在 SDK/控制器内部完成）
+    // ============================================================
+
+    // 六点法标定：记录第 point_num 个工具参考点（1~6）
+    // 调用前需已移动机械臂使 TCP 对准同一标定尖点，SDK 采集当前位姿。
+    int RobotRealDriver::SetToolCalibPoint(int point_num)
+    {
+        if (!is_connected_.load()) return -1;
+        if (point_num < 1 || point_num > 6) {
+            fprintf(stderr, "[RobotRealDriver] SetToolCalibPoint(%d) 参数越界（范围 1~6）\n", point_num);
+            return -1;
+        }
+        int rtn = robot.SetToolPoint(point_num);
+        if (rtn != 0)
+            fprintf(stderr, "[RobotRealDriver] SetToolPoint(%d) 失败 错误码=%d\n", point_num, rtn);
+        return rtn;
+    }
+
+    // 六点法标定：计算工具坐标系（标定计算由 SDK ComputeTool 在控制器内部完成，
+    // 此处仅做单位换算 mm/deg → m/rad 并透传结果）
+    int RobotRealDriver::ComputeToolCalib(std::vector<double>& tcp_pose)
+    {
+        if (!is_connected_.load()) return -1;
+        DescPose pose;
+        int rtn = robot.ComputeTool(&pose);
+        if (rtn != 0) {
+            fprintf(stderr, "[RobotRealDriver] ComputeTool 失败 错误码=%d\n", rtn);
+            return rtn;
+        }
+        tcp_pose = {
+            pose.tran.x * kMm2M, pose.tran.y * kMm2M, pose.tran.z * kMm2M,
+            pose.rpy.rx * kDeg2Rad, pose.rpy.ry * kDeg2Rad, pose.rpy.rz * kDeg2Rad
+        };
+        return 0;
+    }
+
+    // 设置工具坐标系（TCP 相对法兰位姿）并立即生效
+    int RobotRealDriver::SetToolCoord(int id, const std::vector<double>& coord)
+    {
+        if (!is_connected_.load()) return -1;
+        if (id < 0 || id > 14 || coord.size() < 6) {
+            fprintf(stderr, "[RobotRealDriver] SetToolCoord(id=%d, coord_size=%zu) 参数非法\n",
+                    id, coord.size());
+            return -1;
+        }
+        DescPose pose(
+            coord[0] * kM2Mm, coord[1] * kM2Mm, coord[2] * kM2Mm,
+            coord[3] * kRad2Deg, coord[4] * kRad2Deg, coord[5] * kRad2Deg);
+        // type=0 工具坐标系, install=0 机器人末端, toolID=0, loadNum=0
+        int rtn = robot.SetToolCoord(id, &pose, 0, 0, 0, 0);
+        if (rtn != 0)
+            fprintf(stderr, "[RobotRealDriver] SetToolCoord(id=%d) 失败 错误码=%d\n", id, rtn);
+        return rtn;
     }
 }

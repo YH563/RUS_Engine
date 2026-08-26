@@ -199,6 +199,67 @@ namespace RusSimRobotDriver {
         return !trajectory_executor_->IsActive();
     }
 
+    // ============================================================
+    //  工具坐标系相关接口（仿真侧占位 / 本地变换矩阵表）
+    // ============================================================
+
+    // 六点法标定：记录第 point_num 个工具参考点（1~6）
+    // 仿真侧无法执行真实标定，仅记录当前法兰位姿作为占位。
+    int RobotSimDriver::SetToolCalibPoint(int point_num) {
+        if (point_num < 1 || point_num > 6) return -1;
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+        if (calib_points_.size() < 6) calib_points_.resize(6, Eigen::Matrix4d::Identity());
+
+        // 当前法兰位姿 → 齐次矩阵
+        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+        T.block<3, 3>(0, 0) =
+            (Eigen::AngleAxisd(current_state_.flange_pos(5), Eigen::Vector3d::UnitZ())
+           * Eigen::AngleAxisd(current_state_.flange_pos(4), Eigen::Vector3d::UnitY())
+           * Eigen::AngleAxisd(current_state_.flange_pos(3), Eigen::Vector3d::UnitX())).toRotationMatrix();
+        T.block<3, 1>(0, 3) << current_state_.flange_pos(0),
+                               current_state_.flange_pos(1),
+                               current_state_.flange_pos(2);
+        calib_points_[static_cast<size_t>(point_num - 1)] = T;
+        return 0;
+    }
+
+    // 六点法标定：计算工具坐标系（仿真占位：返回当前工具变换）
+    int RobotSimDriver::ComputeToolCalib(std::vector<double>& tcp_pose) {
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+        int idx = std::min<int>(tool_index_.load(),
+                                static_cast<int>(tool_transforms_.size()) - 1);
+        const Eigen::Matrix4d& T = tool_transforms_[idx];
+        const Eigen::Matrix3d R = T.block<3, 3>(0, 0);
+        tcp_pose = {
+            T(0, 3), T(1, 3), T(2, 3),
+            std::atan2(R(2, 1), R(2, 2)),
+            std::asin(-R(2, 0)),
+            std::atan2(R(1, 0), R(0, 0))
+        };
+        return 0;
+    }
+
+    // 设置工具坐标系（TCP 相对法兰位姿，m/rad）→ 存入变换矩阵表并生效
+    int RobotSimDriver::SetToolCoord(int id, const std::vector<double>& coord) {
+        if (id < 0 || id > 14 || coord.size() < 6) return -1;
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+        if (tool_transforms_.size() <= static_cast<size_t>(id))
+            tool_transforms_.resize(static_cast<size_t>(id) + 1, Eigen::Matrix4d::Identity());
+
+        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+        T.block<3, 3>(0, 0) =
+            (Eigen::AngleAxisd(coord[5], Eigen::Vector3d::UnitZ())
+           * Eigen::AngleAxisd(coord[4], Eigen::Vector3d::UnitY())
+           * Eigen::AngleAxisd(coord[3], Eigen::Vector3d::UnitX())).toRotationMatrix();
+        T.block<3, 1>(0, 3) << coord[0], coord[1], coord[2];
+
+        tool_transforms_[static_cast<size_t>(id)] = T;
+        tool_index_.store(id);  // 设置后立即生效为当前工具坐标系
+        return 0;
+    }
+
     // ---- create_robot — 加载模型 + 构建 EAIK 运动学 ----
     void RobotSimDriver::create_robot() {
         char err[1000];
@@ -339,6 +400,23 @@ namespace RusSimRobotDriver {
         current_state_.flange_pos(3) = std::atan2(R(2, 1), R(2, 2));
         current_state_.flange_pos(4) = std::asin(-R(2, 0));
         current_state_.flange_pos(5) = std::atan2(R(1, 0), R(0, 0));
+
+        // 工具坐标系信息：当前工具索引 + TCP 基座位姿（法兰位姿 × 工具相对法兰变换）
+        current_state_.tool_index = tool_index_.load();
+        int tidx = std::min<int>(current_state_.tool_index,
+                                 static_cast<int>(tool_transforms_.size()) - 1);
+        Eigen::Matrix4d T_flange = Eigen::Matrix4d::Identity();
+        T_flange.block<3, 3>(0, 0) = R;
+        T_flange.block<3, 1>(0, 3) = pos;
+        Eigen::Matrix4d T_tcp = T_flange * tool_transforms_[tidx];
+        const Eigen::Matrix3d R_tcp = T_tcp.block<3, 3>(0, 0);
+        current_state_.tool_pose.resize(6);
+        current_state_.tool_pose(0) = T_tcp(0, 3);
+        current_state_.tool_pose(1) = T_tcp(1, 3);
+        current_state_.tool_pose(2) = T_tcp(2, 3);
+        current_state_.tool_pose(3) = std::atan2(R_tcp(2, 1), R_tcp(2, 2));
+        current_state_.tool_pose(4) = std::asin(-R_tcp(2, 0));
+        current_state_.tool_pose(5) = std::atan2(R_tcp(1, 0), R_tcp(0, 0));
     }
 
     // ---- control_loop — 实时控制循环 ----
