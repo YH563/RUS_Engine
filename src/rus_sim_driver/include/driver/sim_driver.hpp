@@ -274,6 +274,10 @@ namespace RusSimRobotDriver {
         std::atomic<bool> is_enabled_{false};
         double flange_offset_{0.0938};
 
+        // === 工具坐标系变换矩阵 ===
+        std::atomic<int> tool_index_{0};  // 工具坐标系索引，默认为0，表示法兰坐标系
+        std::vector<Eigen::Matrix4d> tool_transforms_{Eigen::Matrix4d::Identity()};  // 工具坐标系变换矩阵
+
         // === 线程同步 ===
         uint64_t state_version_{0};
         std::condition_variable_any state_cv_;

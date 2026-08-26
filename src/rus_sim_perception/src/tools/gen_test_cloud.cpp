@@ -46,6 +46,8 @@ int main(int argc, char** argv)
     if (!ok) return 1;
 
     // 随机挑两个点作为起始点（保证间距足够，避免路径退化）
+    std::random_device rd;
+    std::mt19937 gen(rd());
     std::uniform_int_distribution<size_t> dist(0, cloud.size() - 1);
     size_t i_start = 0, i_goal = 0;
     for (int attempt = 0; attempt < 200; ++attempt) {

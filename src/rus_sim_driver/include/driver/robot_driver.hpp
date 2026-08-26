@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <Eigen/Dense>
+#include <vector>
 
 #include "robot.h"
 #include "robot_types.h"
@@ -35,6 +36,8 @@ namespace RusRobotDriver {
 
         // 获取当前的机械臂状态，flag 0-阻塞，1-非阻塞
         virtual int GetCurrentState(uint8_t flag, RobotState& robot_state) = 0;
+
+        //
 
         // 关节空间运动
         virtual int MoveJ(MotionCommand& joint_command) = 0;
@@ -77,6 +80,9 @@ namespace RusRobotDriver {
 
         // 查询机械臂运动是否已完成
         virtual bool IsMotionDone() const = 0;
+
+        // === 工具坐标系相关接口 ===
+
     };
 
     // 采用工厂模式

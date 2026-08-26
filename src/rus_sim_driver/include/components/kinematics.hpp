@@ -68,6 +68,7 @@ namespace RusRobotDriver {
     private:
         std::shared_ptr<const EAIK::Robot> ki_model_;
         double flange_offset_;
+        Eigen::Matrix4d tool_transform_ = Eigen::Matrix4d::Identity();  // 工具坐标系的变换矩阵
     };
 
 }  // namespace RusRobotDriver
