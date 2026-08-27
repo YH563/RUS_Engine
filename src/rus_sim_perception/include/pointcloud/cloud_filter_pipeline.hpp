@@ -18,11 +18,12 @@ namespace RusPerception::PointCloud {
 
     /// 滤波链参数（由 perception_params.yaml 注入）
     struct FilterParameter {
-        float voxel_leaf_size = 0.003f;       // 体素大小（米）
+        float voxel_leaf_size = 0.005f;       // 体素大小（米）
         std::string passthrough_field = "z";  // 直通字段 x / y / z
         float passthrough_limit_min = -0.5f;  // 直通最小值
         float passthrough_limit_max = 0.5f;   // 直通最大值
         bool passthrough_negative = false;    // 取反（提取范围外）
+        bool enable_statistical = false;      // 统计滤波开关（KDTree k 近邻开销大，高频处理建议关闭）
         int statistical_mean_k = 50;          // 统计滤波邻域点数
         float statistical_std_dev_mul = 1.0f; // 统计滤波标准差倍数
     };
@@ -50,6 +51,7 @@ namespace RusPerception::PointCloud {
         bool Apply(CloudRGB& cloud, std::vector<FilterStageStat>* stats = nullptr);
 
     private:
+        bool remove_nan(CloudRGB& cloud);  // 清除 NaN / Inf 点（RealSense 无效深度）
         bool passthrough(CloudRGB& cloud);
         bool statistical(CloudRGB& cloud);
         bool voxel(CloudRGB& cloud);

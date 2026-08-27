@@ -20,22 +20,26 @@ namespace RusPerception {
         // ── 话题 / 调度参数 ──
         input_cloud_topic_    = declare_parameter<std::string>("input_cloud_topic", "/camera/camera/depth/color/points");
         output_cloud_topic_   = declare_parameter<std::string>("output_cloud_topic", "/preprocessed_cloud");
+        frame_topic_          = declare_parameter<std::string>("frame_topic", "/perception/frame");
         sensor_cloud_topic_   = declare_parameter<std::string>("sensor_cloud_topic", "/sensor/pointcloud");
         driver_state_topic_   = declare_parameter<std::string>("driver_state_topic", "/driver/state");
         max_allowed_diff_sec_ = declare_parameter<double>("max_allowed_diff_sec", 0.05);
-        process_period_       = declare_parameter<double>("process_period", 1.0);
+        process_period_       = declare_parameter<double>("process_period", 0.1);
+        allow_stale_pose_     = declare_parameter<bool>("allow_stale_pose", false);
+        map_publish_period_   = declare_parameter<double>("map_publish_period", 2.0);
         max_pose_cache_       = static_cast<size_t>(declare_parameter<int>("max_pose_cache", 256));
-        map_max_points_       = static_cast<size_t>(declare_parameter<int>("map_max_points", 0));
+        map_max_points_       = static_cast<size_t>(declare_parameter<int>("map_max_points", 500000));
         input_pcd_            = declare_parameter<std::string>("input_pcd", "");
         pcd_dir_              = declare_parameter<std::string>("pcd_dir", "");
 
         // ── 滤波参数（perception_params.yaml 注入）──
         PointCloud::FilterParameter param;
-        param.voxel_leaf_size         = static_cast<float>(declare_parameter<double>("voxel_leaf_size", 0.003));
+        param.voxel_leaf_size         = static_cast<float>(declare_parameter<double>("voxel_leaf_size", 0.005));
         param.passthrough_field       = declare_parameter<std::string>("passthrough_field", "z");
         param.passthrough_limit_min   = static_cast<float>(declare_parameter<double>("passthrough_limit_min", -0.5));
         param.passthrough_limit_max   = static_cast<float>(declare_parameter<double>("passthrough_limit_max", 0.5));
         param.passthrough_negative    = declare_parameter<bool>("passthrough_negative", false);
+        param.enable_statistical      = declare_parameter<bool>("enable_statistical_filter", false);
         param.statistical_mean_k      = declare_parameter<int>("statistical_mean_k", 50);
         param.statistical_std_dev_mul = static_cast<float>(declare_parameter<double>("statistical_std_dev_mul", 1.0));
 
@@ -77,10 +81,11 @@ namespace RusPerception {
             driver_state_topic_, 10,
             [this](const RobotStateMsg::SharedPtr msg) { on_driver_state(msg); });
 
-        // ── 发布：raw 点云（planning）+ 压缩帧（前端）──
-        // TransientLocal：保留最新一帧，晚订阅的 RViz / 下游也能立即拿到地图
+        // ── 发布：实时帧（RViz 可视化）+ 累积地图（planning 输入）+ 压缩帧（前端预留）──
+        // TransientLocal：保留最新一帧，晚订阅的 RViz / 下游也能立即拿到数据
         rclcpp::QoS map_qos(10);
         map_qos.transient_local();
+        frame_pub_  = create_publisher<PointCloud2>(frame_topic_, map_qos);
         cloud_pub_  = create_publisher<PointCloud2>(output_cloud_topic_, map_qos);
         sensor_pub_ = create_publisher<SensorFrame>(sensor_cloud_topic_, map_qos);
 
@@ -91,9 +96,10 @@ namespace RusPerception {
                       std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
         RCLCPP_INFO(get_logger(),
-            "PerceptionNode 已启动：点云=%s 状态=%s raw=%s sensor=%s 处理周期=%.2fs",
+            "PerceptionNode 已启动：点云=%s 状态=%s 实时帧=%s 地图=%s 处理周期=%.0fms 地图发布周期=%.1fs",
             input_cloud_topic_.c_str(), driver_state_topic_.c_str(),
-            output_cloud_topic_.c_str(), sensor_cloud_topic_.c_str(), process_period_);
+            frame_topic_.c_str(), output_cloud_topic_.c_str(),
+            process_period_ * 1000.0, map_publish_period_);
 
         // 启动即加载离线点云（input_pcd 参数，联调用）
         if (!input_pcd_.empty()) {
@@ -140,50 +146,93 @@ namespace RusPerception {
 
     void PerceptionNode::process_frame()
     {
-        // 1) 实时管线：有输入点云且位姿足够时，处理并累积进地图
-        const bool have_input = cloud_cache_ && !cloud_cache_->data.empty() && pose_interp_.Size() >= 2;
+        // ── 实时处理：有输入点云时 对齐 → 变换 → 滤波 → 入图 → 发布实时帧 ──
+        const bool have_input = cloud_cache_ && !cloud_cache_->data.empty();
         if (have_input) {
-            // 时间对齐：按点云采集时间戳插值法兰位姿
             const double t = cloud_time_.seconds();
-            Eigen::Isometry3d T_base_flange;
-            double nearest_diff = 0.0;
-            if (!pose_interp_.Sample(t, T_base_flange, &nearest_diff)) {
-                RCLCPP_WARN(get_logger(), "位姿插值失败（时间越界 t=%.3f），丢弃本帧", t);
-            } else if (nearest_diff > max_allowed_diff_sec_) {
-                RCLCPP_WARN(get_logger(), "点云与位姿时间差过大（%.4fs > %.4fs），丢弃本帧",
+            // 防重复入图：同一帧（时间戳相同或更旧）不重复处理，避免相机停发/对齐失败时反复累积
+            if (t > last_processed_stamp_) {
+                Eigen::Isometry3d T_base_flange;
+                double nearest_diff = 0.0;
+                bool aligned = pose_interp_.Sample(t, T_base_flange, &nearest_diff);
+
+                // 真机相机与驱动时钟不同步时允许降级：用最近位姿近似，避免持续丢帧
+                if (!aligned && allow_stale_pose_ && pose_interp_.LatestPose(T_base_flange)) {
+                    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                        "位姿对齐失败（与最近位姿差 %.4fs），已降级用最近位姿", nearest_diff);
+                    aligned = true;
+                }
+
+                if (!aligned) {
+                    // 对齐失败且未降级：丢弃本帧。同时标记已处理，防止后续周期反复重试同一旧帧
+                    if (pose_interp_.Size() >= 2) {
+                        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+                            "点云与位姿时间差过大（%.4fs > %.4fs），丢弃本帧",
                             nearest_diff, max_allowed_diff_sec_);
-            } else {
-                // PointCloud2 → CloudRGB → 变换到 base_link → 滤波
-                auto cloud_rgb = std::make_shared<CloudRGB>();
-                pcl::fromROSMsg(*cloud_cache_, *cloud_rgb);
-                CloudRGBPtr base_cloud;
-                if (!cloud_rgb->empty() &&
-                    transformer_.Transform(cloud_rgb, T_base_flange.matrix().cast<float>(), base_cloud)) {
-                    std::vector<PointCloud::FilterStageStat> stats;
-                    if (filter_.Apply(*base_cloud, &stats)) {
-                        for (const auto& s : stats) {
-                            RCLCPP_DEBUG(get_logger(), "滤波 %s: %zu → %zu", s.stage.c_str(), s.in, s.out);
-                        }
-                        map_.AddFrame(base_cloud);
-                        RCLCPP_DEBUG(get_logger(), "地图更新：%zu 帧，%zu 点",
-                                     map_.FrameCount(), map_.PointCount());
-                    } else {
-                        RCLCPP_WARN(get_logger(), "滤波后点云为空");
                     }
+                    last_processed_stamp_ = t;
                 } else {
-                    RCLCPP_WARN(get_logger(), "点云变换失败");
+                    // PointCloud2 → CloudRGB → 变换到 base_link → 滤波
+                    auto cloud_rgb = std::make_shared<CloudRGB>();
+                    pcl::fromROSMsg(*cloud_cache_, *cloud_rgb);
+                    CloudRGBPtr base_cloud;
+                    if (!cloud_rgb->empty() &&
+                        transformer_.Transform(cloud_rgb, T_base_flange.matrix().cast<float>(), base_cloud)) {
+                        std::vector<PointCloud::FilterStageStat> stats;
+                        if (filter_.Apply(*base_cloud, &stats)) {
+                            map_.AddFrame(base_cloud);
+                            ++processed_frames_;
+                            last_processed_stamp_ = t;
+                            // 实时帧发布（高频，RViz 订阅 /perception/frame 查看流畅画面）
+                            publish_frame(base_cloud);
+                        } else {
+                            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "滤波后点云为空");
+                            last_processed_stamp_ = t;
+                        }
+                    } else {
+                        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "点云变换失败");
+                        last_processed_stamp_ = t;
+                    }
                 }
             }
         }
 
-        // 2) 统一从地图发布（定时器持续驱动，RViz 始终有数据）
+        // ── 累积地图发布（节流）：planning 仅在 pre_scan_done 时取一次，低频全量发布即可 ──
+        // 全图 Compact + 快照拷贝 + zstd 编码开销大，若随 10Hz 处理会阻塞实时帧，故独立节流。
+        const double now = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
         if (map_.PointCount() > 0) {
-            map_.Compact();
-            publish_cloud(map_.Snapshot());
+            if ((now - last_map_publish_time_) >= map_publish_period_) {
+                map_.Compact();
+                publish_cloud(map_.Snapshot());
+                last_map_publish_time_ = now;
+            }
         } else {
             RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
                 "地图为空（等待 /camera 输入，或 load_cloud 加载 PCD）");
         }
+
+        // ── 帧率统计日志（每 2s 输出一次，便于真机排查）──
+        if (now - last_process_log_time_ >= 2.0) {
+            process_rate_hz_ = processed_frames_ / std::max(0.001, now - last_process_log_time_);
+            RCLCPP_INFO(get_logger(), "处理统计：%.1fHz | 地图 %zu 帧 %zu 点 | 实时帧发布中",
+                        process_rate_hz_, map_.FrameCount(), map_.PointCount());
+            processed_frames_ = 0;
+            last_process_log_time_ = now;
+        }
+    }
+
+    bool PerceptionNode::publish_frame(const CloudRGBPtr& cloud)
+    {
+        if (!cloud || cloud->empty()) return false;
+
+        auto msg = std::make_shared<PointCloud2>();
+        pcl::toROSMsg(*cloud, *msg);
+        // toROSMsg 会用 PCL 点云 header 整体覆盖，frame_id/stamp 必须在其后设置
+        msg->header.frame_id = "base_link";
+        msg->header.stamp = cloud_time_;
+        frame_pub_->publish(*msg);
+        return true;
     }
 
     bool PerceptionNode::publish_cloud(const CloudRGBPtr& cloud)

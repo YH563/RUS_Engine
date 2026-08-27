@@ -29,10 +29,25 @@ namespace RusPerception {
             return false;
         }
 
+        // 精确命中端点：直接用端点位姿（upper_bound 无法插值到端点，需单独处理）
+        if (t == buffer_.front().stamp) {
+            if (nearest_diff) *nearest_diff = 0.0;
+            out = buffer_.front().pose;
+            return true;
+        }
+        if (t == buffer_.back().stamp) {
+            if (nearest_diff) *nearest_diff = 0.0;
+            out = buffer_.back().pose;
+            return true;
+        }
+
         // 第一个 stamp > t 的帧
         auto it = std::upper_bound(buffer_.begin(), buffer_.end(), t,
                                    [](double val, const TimedPose& p) { return val < p.stamp; });
-        if (it == buffer_.begin() || it == buffer_.end()) return false;
+        if (it == buffer_.begin() || it == buffer_.end()) {
+            if (nearest_diff) *nearest_diff = 0.0;
+            return false;  // 理论不可达（t 已排除两端点外）
+        }
         const TimedPose& hi = *it;
         const TimedPose& lo = *(it - 1);
 

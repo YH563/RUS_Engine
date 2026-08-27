@@ -1,5 +1,8 @@
 #include "pointcloud/cloud_filter_pipeline.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/voxel_grid.h>
@@ -19,9 +22,25 @@ namespace RusPerception::PointCloud {
             return ok && !cloud.empty();
         };
 
+        if (!run("nan_remove", &CloudFilterPipeline::remove_nan)) return false;
         if (!run("passthrough", &CloudFilterPipeline::passthrough)) return false;
-        if (!run("statistical", &CloudFilterPipeline::statistical)) return false;
+        // 统计滤波（KDTree 近邻开销大）：按参数开关，高频实时处理时建议关闭
+        if (param_.enable_statistical) {
+            if (!run("statistical", &CloudFilterPipeline::statistical)) return false;
+        }
         if (!run("voxel", &CloudFilterPipeline::voxel)) return false;
+        return true;
+    }
+
+    bool CloudFilterPipeline::remove_nan(CloudRGB& cloud)
+    {
+        if (cloud.empty()) return false;
+        // 清除 NaN / Inf 点：RealSense 深度无效区域会产生 NaN 坐标，
+        // 若不剔除会污染后续 KDTree（planning 建图）与体素化。
+        cloud.erase(std::remove_if(cloud.begin(), cloud.end(),
+            [](const pcl::PointXYZRGB& p) {
+                return !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z);
+            }), cloud.end());
         return true;
     }
 

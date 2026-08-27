@@ -3,8 +3,9 @@ perception_node:
   ros__parameters:
     # ── 话题参数 ──
     input_cloud_topic: "/camera/camera/depth/color/points"   # 输入点云话题（深度相机原始点云）
-    output_cloud_topic: "/preprocessed_cloud"                # raw 点云（planning 规划输入，base_link）
-    sensor_cloud_topic: "/sensor/pointcloud"                 # 压缩点云帧（SensorFrame → 前端 /sensor 通路）
+    output_cloud_topic: "/preprocessed_cloud"                # 累积地图点云（planning 规划输入，base_link，低频全量发布）
+    frame_topic: "/perception/frame"                         # 实时帧点云（当前处理帧，高频，RViz 实时可视化）
+    sensor_cloud_topic: "/sensor/pointcloud"                 # 压缩点云帧（SensorFrame → 前端 /sensor 通路，预留）
     driver_state_topic: "/driver/state"                      # 机械臂状态话题（位姿时间对齐用）
 
     # ── 时间对齐 / 调度参数 ──
@@ -12,21 +13,24 @@ perception_node:
     # 处理时按点云采集时刻对位姿队列插值。
     max_allowed_diff_sec: 0.05       # 点云与位姿最大允许时间差（秒），超差丢帧
     max_pose_cache: 256              # 位姿缓存最大帧数（driver 125Hz → ~2s）
-    process_period: 1.0              # 处理周期（秒）：对齐→变换→滤波→入图→发布
+    process_period: 0.1              # 处理周期（秒）：对齐→变换→滤波→入图；0.1s = 10Hz
+    allow_stale_pose: false          # 位姿对齐失败时：true=降级用最近位姿继续处理；false=丢弃本帧（防错位数据）
+    map_publish_period: 2.0          # 累积地图发布周期（秒）：0.5Hz 全量发布 /preprocessed_cloud（planning 仅在 pre_scan_done 取一次）
 
     # ── 地图参数 ──
-    map_max_points: 0                # 地图点数上限（超过自动体素降采样；0 = 不限）
+    map_max_points: 500000           # 地图点数上限（超过自动体素降采样；0 = 不限）
 
     # ── 离线点云加载（联调）──
     input_pcd: "/tmp/test_cloud.pcd"   # 启动即加载的 PCD 路径（空 = 不加载）
     pcd_dir: ""                        # load_cloud 按索引加载的 PCD 目录（空 = 仅 input_pcd_）
 
     # ── 滤波参数 ──
-    voxel_leaf_size: 0.003           # 体素滤波器叶子大小（米）
+    voxel_leaf_size: 0.005           # 体素滤波器叶子大小（米）——真机大场景建议 ≥0.004，过小会导致点量巨大、处理变慢
     passthrough_field: "z"           # 直通滤波字段，可选 "x" / "y" / "z"
     passthrough_limit_min: -0.5      # 直通滤波最小值
     passthrough_limit_max: 0.5       # 直通滤波最大值
     passthrough_negative: false      # 是否取反（提取范围外的点）
+    enable_statistical_filter: false # 统计滤波开关（KDTree 50 近邻开销大，高频处理建议关闭；真机静止场景可开启）
     statistical_mean_k: 50           # 统计滤波邻域点数
     statistical_std_dev_mul: 1.0     # 统计滤波标准差倍数
 

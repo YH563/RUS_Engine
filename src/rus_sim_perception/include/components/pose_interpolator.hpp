@@ -46,6 +46,18 @@ namespace RusPerception {
          */
         bool Sample(double t, Eigen::Isometry3d& out, double* nearest_diff = nullptr) const;
 
+        /**
+         * @brief 取最新位姿（时间对齐降级用：真机相机/驱动时钟不同步时，
+         *        用最近位姿近似，避免持续丢帧）。
+         *
+         * @return true 有缓存位姿
+         */
+        bool LatestPose(Eigen::Isometry3d& out) const {
+            if (buffer_.empty()) return false;
+            out = buffer_.back().pose;
+            return true;
+        }
+
         void Clear();
 
         size_t Size() const { return buffer_.size(); }
