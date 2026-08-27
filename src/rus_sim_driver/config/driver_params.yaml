@@ -3,10 +3,13 @@
     # ── 驱动类型 ──
     # "sim"  — 仿真驱动（默认，配合 RobotSimDriver）
     # "real" — 真实机器人驱动（需设置 robot_ip）
-    driver_type: "real"
+    driver_type: "sim"
 
     # ── 机器人 IP（仅 real 模式需要） ──
     robot_ip: "192.168.58.2"
 
     # ── 录制 / 回放 / 脚本文件路径 ──
     script_path:   ""
+
+    # ── 工具坐标系配置文件路径（持久化，防机械臂重启丢失；留空则用 ~/.rus_sim/tool_coords.yaml）──
+    tool_coords_file: ""

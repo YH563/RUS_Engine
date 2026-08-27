@@ -103,6 +103,9 @@ namespace RusRealRobotDriver {
 
         // 设置工具坐标系（TCP 相对法兰位姿）并生效
         int SetToolCoord(int id, const std::vector<double>& coord) override;
+
+        // 切换当前工具坐标系索引（运动参考系随之切换）
+        int SetToolIndex(int id) override;
     
     private:
 
@@ -114,5 +117,6 @@ namespace RusRealRobotDriver {
         std::atomic<bool> is_servo_enabled_{false};  // 伺服模式是否已开启（ServoMoveStart/End 维护）
         std::atomic<int> last_rpc_error_{0};  // 最近一次 RPC 错误码（供上层诊断连接失败原因）
         uint8_t last_jog_ref_{0};  // 最近一次点动的 SDK ref（StopJOGDecel 用），0=关节点动
+        std::atomic<int> tool_index_{0};  // 当前工具坐标系索引（MoveJ/MoveL 的 SDK tool 参数）
     };
 }

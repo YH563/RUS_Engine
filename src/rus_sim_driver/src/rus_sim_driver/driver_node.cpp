@@ -1,6 +1,11 @@
 #include "rus_sim_driver/driver_node.hpp"
 #include "driver/real_driver.hpp"
 
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <cstdlib>
+
 namespace RusDriverNode {
 
     DriverNode::DriverNode() : Node("driver_node") {
@@ -8,6 +13,13 @@ namespace RusDriverNode {
         std::string driver_type = declare_parameter<std::string>("driver_type", "sim");
         std::string robot_ip   = declare_parameter<std::string>("robot_ip", "");
         script_path_           = declare_parameter<std::string>("script_path", "");
+        tool_coords_file_      = declare_parameter<std::string>("tool_coords_file", "");
+
+        // 工具坐标系持久化文件路径（默认 ~/.rus_sim/tool_coords.yaml）
+        if (tool_coords_file_.empty()) {
+            const char* home = std::getenv("HOME");
+            tool_coords_file_ = std::string(home ? home : ".") + "/.rus_sim/tool_coords.yaml";
+        }
 
         // ── 创建驱动 ──
         robot_ip_ = robot_ip;
@@ -34,6 +46,12 @@ namespace RusDriverNode {
                     robot_ip.c_str(), rpc_err);
             }
         }
+
+        // ── 初始化工具坐标系：加载配置文件 → 写入驱动 → 设置当前索引 ──
+        // 真实驱动：将配置写入控制器（机械臂重启后可通过该配置恢复）；
+        // 仿真驱动：填充本地工具变换矩阵表并同步运动学。
+        load_tool_coords();
+        init_tool_coords();
 
         // ── Service: /driver/command ──
         command_server_ = create_service<rus_sim_interfaces::srv::CommandService>(
@@ -243,7 +261,34 @@ namespace RusDriverNode {
                 result = std::move(tcp);
                 return true;
             },
-            [&](const SetToolCoordCmd& c)     { return driver_->SetToolCoord(c.id, c.coord) == 0; },
+            [&](const SetToolCoordCmd& c) {
+                // 写入驱动（真实驱动调 SDK SetToolCoord 写入控制器并生效）
+                if (driver_->SetToolCoord(c.id, c.coord) != 0) return false;
+                // 更新内存工具表并持久化（机械臂重启 / 仿真重启后可恢复）
+                if (c.id >= 0 && c.id <= 14) {
+                    if (tool_coords_.size() <= static_cast<size_t>(c.id))
+                        tool_coords_.resize(static_cast<size_t>(c.id) + 1, {0, 0, 0, 0, 0, 0});
+                    tool_coords_[static_cast<size_t>(c.id)] = c.coord;
+                    save_tool_coords();
+                }
+                return true;
+            },
+            [&](const SetToolIndexCmd& c) {
+                // 切换当前工具坐标系索引（运动参考系随之切换）
+                if (driver_->SetToolIndex(c.id) != 0) return false;
+                tool_index_param_ = c.id;
+                save_tool_coords();
+                return true;
+            },
+            [&](const GetToolCoordsCmd&) {
+                // 返回：[当前索引, 工具数, 工具0(6值), 工具1(6值), ...]
+                result.push_back(static_cast<double>(tool_index_param_));
+                result.push_back(static_cast<double>(tool_coords_.size()));
+                for (const auto& c : tool_coords_) {
+                    for (double v : c) result.push_back(v);
+                }
+                return true;
+            },
 
             [](const auto&) { return false; }  // 兜底
         }, command);
@@ -348,6 +393,113 @@ namespace RusDriverNode {
         }
         RCLCPP_INFO(get_logger(), "指令文件执行完毕: %s (%d 行)", path.c_str(), line_num);
         return true;
+    }
+
+    // ============================================================
+    //  工具坐标系配置持久化（load / save / init）
+    // ============================================================
+
+    void DriverNode::load_tool_coords() {
+        // 内置默认：工具0 = 法兰坐标系（恒等）。
+        // flange_offset（模型末端→法兰）已在驱动运动学/状态中单独处理，不属于工具变换；
+        // 探头/深度相机等工具相对法兰的变换由 set_tool_coord / 六点标定写入配置。
+        tool_coords_ = {
+            {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+        };
+        tool_index_param_ = 0;  // 默认使用法兰坐标系
+
+        std::ifstream file(tool_coords_file_);
+        if (!file) {
+            // 首次启动：创建默认配置文件
+            RCLCPP_WARN(get_logger(), "工具坐标系配置文件不存在，使用内置默认并创建: %s",
+                        tool_coords_file_.c_str());
+            save_tool_coords();
+            return;
+        }
+
+        auto trim = [](std::string& s) {
+            s.erase(s.begin(), std::find_if(s.begin(), s.end(),
+                [](unsigned char c) { return !std::isspace(c); }));
+            s.erase(std::find_if(s.rbegin(), s.rend(),
+                [](unsigned char c) { return !std::isspace(c); }).base(), s.end());
+        };
+
+        std::string line;
+        while (std::getline(file, line)) {
+            trim(line);
+            if (line.empty() || line[0] == '#') continue;
+            auto colon = line.find(':');
+            if (colon == std::string::npos) continue;
+            std::string key = line.substr(0, colon);
+            std::string val = line.substr(colon + 1);
+            trim(key);
+            trim(val);
+
+            if (key == "tool_index") {
+                try { tool_index_param_ = std::stoi(val); } catch (...) {}
+                continue;
+            }
+            // 工具条目："id: [x,y,z,rx,ry,rz]"
+            if (!key.empty() && val.size() >= 2 && val.front() == '[' && val.back() == ']') {
+                std::string inner = val.substr(1, val.size() - 2);
+                std::replace(inner.begin(), inner.end(), ',', ' ');
+                std::istringstream iss(inner);
+                std::vector<double> v;
+                double d;
+                while (iss >> d) v.push_back(d);
+                if (v.size() >= 6) {
+                    int id = 0;
+                    try { id = std::stoi(key); } catch (...) { continue; }
+                    if (id >= 0 && id <= 14) {
+                        if (tool_coords_.size() <= static_cast<size_t>(id))
+                            tool_coords_.resize(static_cast<size_t>(id) + 1, {0, 0, 0, 0, 0, 0});
+                        tool_coords_[static_cast<size_t>(id)] = {v[0], v[1], v[2], v[3], v[4], v[5]};
+                    }
+                }
+            }
+        }
+        RCLCPP_INFO(get_logger(), "工具坐标系配置加载完成: %zu 个工具, 当前索引=%d",
+                    tool_coords_.size(), tool_index_param_);
+    }
+
+    bool DriverNode::save_tool_coords() {
+        // 确保目录存在
+        auto pos = tool_coords_file_.find_last_of('/');
+        if (pos != std::string::npos && pos > 0) {
+            std::error_code ec;
+            std::filesystem::create_directories(tool_coords_file_.substr(0, pos), ec);
+        }
+
+        std::ofstream file(tool_coords_file_);
+        if (!file) {
+            RCLCPP_ERROR(get_logger(), "无法写入工具坐标系配置文件: %s", tool_coords_file_.c_str());
+            return false;
+        }
+        file << "# RUS-Sim 工具坐标系配置（TCP 相对法兰，单位 m/rad）\n";
+        file << "# 0 = 法兰坐标系（恒等）；其余由 set_tool_coord / 六点标定写入并持久化\n";
+        file << "tool_coords:\n";
+        for (size_t i = 0; i < tool_coords_.size(); ++i) {
+            file << "  " << i << ": [";
+            for (size_t j = 0; j < tool_coords_[i].size() && j < 6; ++j) {
+                if (j) file << ", ";
+                file << tool_coords_[i][j];
+            }
+            file << "]\n";
+        }
+        file << "tool_index: " << tool_index_param_ << "\n";
+        file.close();
+        RCLCPP_INFO(get_logger(), "工具坐标系配置已保存: %s", tool_coords_file_.c_str());
+        return true;
+    }
+
+    void DriverNode::init_tool_coords() {
+        for (size_t i = 0; i < tool_coords_.size(); ++i) {
+            if (driver_->SetToolCoord(static_cast<int>(i), tool_coords_[i]) != 0)
+                RCLCPP_WARN(get_logger(), "初始化工具坐标系 %zu 失败", i);
+        }
+        if (driver_->SetToolIndex(tool_index_param_) != 0)
+            RCLCPP_WARN(get_logger(), "设置当前工具坐标系索引 %d 失败", tool_index_param_);
+        RCLCPP_INFO(get_logger(), "工具坐标系初始化完成，当前索引=%d", tool_index_param_);
     }
 
 }  // namespace RusDriverNode

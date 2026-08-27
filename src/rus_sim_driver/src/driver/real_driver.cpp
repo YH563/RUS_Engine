@@ -141,7 +141,8 @@ namespace RusRealRobotDriver {
 
         // vel/acc：比例 [0~1] → 百分比 [0~100]；ovl=100 不额外缩放；
         // blendT=0 非阻塞（立即返回，运动由控制器队列执行，完成状态用 IsMotionDone 轮询）
-        return robot.MoveJ(&jp, nullptr, 0, 0,
+        // tool 参数 = 当前工具坐标系索引（0=法兰，N=工具 N），运动参考系随索引切换
+        return robot.MoveJ(&jp, nullptr, tool_index_.load(), 0,
             static_cast<float>(joint_command.speed * 100.0),
             static_cast<float>(joint_command.acceleration * 100.0),
             100.0f, nullptr, 0.0f, 0, nullptr);
@@ -161,7 +162,8 @@ namespace RusRealRobotDriver {
         dp.rpy.rz = desc_command.target(5) * kRad2Deg;
 
         // blendR=0 非阻塞，与 MoveJ 一致
-        return robot.MoveL(nullptr, &dp, 0, 0,
+        // tool 参数 = 当前工具坐标系索引；目标 desc_pos 为 TCP 基座位姿，SDK 按工具变换计算法兰目标
+        return robot.MoveL(nullptr, &dp, tool_index_.load(), 0,
             static_cast<float>(desc_command.speed * 100.0),
             static_cast<float>(desc_command.acceleration * 100.0),
             100.0f, 0.0f, nullptr, 0, 0, nullptr);
@@ -374,4 +376,15 @@ namespace RusRealRobotDriver {
             fprintf(stderr, "[RobotRealDriver] SetToolCoord(id=%d) 失败 错误码=%d\n", id, rtn);
         return rtn;
     }
+    // 切换当前工具坐标系索引（运动参考系随之切换：0=法兰，N=工具 N）
+    int RobotRealDriver::SetToolIndex(int id)
+    {
+        if (id < 0 || id > 14) {
+            fprintf(stderr, "[RobotRealDriver] SetToolIndex(%d) 参数越界（范围 0~14）", id);
+            return -1;
+        }
+        tool_index_.store(id);
+        return 0;
+    }
+
 }

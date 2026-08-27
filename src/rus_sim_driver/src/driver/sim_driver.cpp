@@ -24,8 +24,8 @@ namespace RusSimRobotDriver {
 
         // 创建轨迹调度器与 CTC 控制器
         // 运动学统一封装在 KinematicsSolver 中，由调度器持有并下发给各轨迹段
-        auto kinematics = std::make_shared<RusRobotDriver::KinematicsSolver>(ki_model_, flange_offset_);
-        trajectory_executor_ = std::make_unique<RusRobotDriver::TrajectoryExecutor>(kinematics);
+        kinematics_ = std::make_shared<RusRobotDriver::KinematicsSolver>(ki_model_, flange_offset_);
+        trajectory_executor_ = std::make_unique<RusRobotDriver::TrajectoryExecutor>(kinematics_);
         trajectory_executor_->Start();
 
         auto dynamics = [this](const VectorXd& q, const VectorXd& qd,
@@ -256,7 +256,21 @@ namespace RusSimRobotDriver {
         T.block<3, 1>(0, 3) << coord[0], coord[1], coord[2];
 
         tool_transforms_[static_cast<size_t>(id)] = T;
-        tool_index_.store(id);  // 设置后立即生效为当前工具坐标系
+        // 若修改的是当前工具坐标系，同步运动学工具变换（不改变当前索引）
+        if (static_cast<int>(id) == tool_index_.load() && kinematics_)
+            kinematics_->SetToolTransform(T);
+        return 0;
+    }
+
+    // 切换当前工具坐标系索引：更新运动学工具变换 + 状态索引
+    int RobotSimDriver::SetToolIndex(int id) {
+        if (id < 0 || id > 14) return -1;
+        std::lock_guard<std::recursive_mutex> lock(mtx_);
+        if (tool_transforms_.size() <= static_cast<size_t>(id))
+            tool_transforms_.resize(static_cast<size_t>(id) + 1, Eigen::Matrix4d::Identity());
+        tool_index_.store(id);
+        if (kinematics_)
+            kinematics_->SetToolTransform(tool_transforms_[static_cast<size_t>(id)]);
         return 0;
     }
 
@@ -389,6 +403,8 @@ namespace RusSimRobotDriver {
         R << R9[0], R9[1], R9[2],
              R9[3], R9[4], R9[5],
              R9[6], R9[7], R9[8];
+        // 法兰坐标 = 模型末端(wrist3_link) + flange_offset（加上偏移才是法兰坐标；
+        // 深度相机/探头等工具的变换矩阵均相对法兰）
         if (flange_offset_ != 0.0) {
             pos(0) += flange_offset_ * R(0, 2);
             pos(1) += flange_offset_ * R(1, 2);
@@ -401,7 +417,7 @@ namespace RusSimRobotDriver {
         current_state_.flange_pos(4) = std::asin(-R(2, 0));
         current_state_.flange_pos(5) = std::atan2(R(1, 0), R(0, 0));
 
-        // 工具坐标系信息：当前工具索引 + TCP 基座位姿（法兰位姿 × 工具相对法兰变换）
+        // 工具坐标系信息：当前工具索引 + TCP 基座位姿（法兰 × 工具相对法兰变换）
         current_state_.tool_index = tool_index_.load();
         int tidx = std::min<int>(current_state_.tool_index,
                                  static_cast<int>(tool_transforms_.size()) - 1);

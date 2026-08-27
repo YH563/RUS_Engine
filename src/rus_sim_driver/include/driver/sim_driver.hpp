@@ -196,6 +196,14 @@ namespace RusSimRobotDriver {
          */
         int SetToolCoord(int id, const std::vector<double>& coord) override;
 
+        /**
+         * @brief 切换当前工具坐标系索引
+         *
+         * 同步更新运动学工具变换（KinematicsSolver::SetToolTransform）与状态 tool_index，
+         * 使 MoveL 运动与 tool_pose 状态即时反映新工具坐标系。
+         */
+        int SetToolIndex(int id) override;
+
         // === 仿真控制 ===
         /**
          * @brief 设置仿真时间倍率
@@ -274,6 +282,9 @@ namespace RusSimRobotDriver {
         // === 机器人状态 ===
         RobotState current_state_;
 
+        // === 运动学求解器（create_robot 中构造；工具变换随 SetToolIndex/SetToolCoord 更新） ===
+        std::shared_ptr<RusRobotDriver::KinematicsSolver> kinematics_;
+
         // === 轨迹调度器与控制器（create_robot 后构造） ===
         std::unique_ptr<RusRobotDriver::TrajectoryExecutor> trajectory_executor_;
         std::unique_ptr<RusRobotDriver::IController> controller_;
@@ -300,7 +311,7 @@ namespace RusSimRobotDriver {
 
         std::atomic<bool> is_connected_{false};
         std::atomic<bool> is_enabled_{false};
-        double flange_offset_{0.0938};
+        double flange_offset_{0.0938};  // 模型末端(wrist3_link)到法兰的 Z 向偏移 [m]（法兰坐标 = 末端 + 偏移）
 
         // === 工具坐标系变换矩阵 ===
         std::atomic<int> tool_index_{0};  // 工具坐标系索引，默认为0，表示法兰坐标系

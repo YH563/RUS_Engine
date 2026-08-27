@@ -113,6 +113,17 @@ namespace RusRobotDriver {
          */
         virtual int SetToolCoord(int id, const std::vector<double>& coord) = 0;
 
+        /**
+         * @brief 切换当前工具坐标系索引（运动参考系随之切换：0=法兰坐标系，N=工具坐标系 N）。
+         *
+         * 真实驱动：后续 MoveJ/MoveL/ServoCart 的 SDK tool 参数使用该索引；
+         * 仿真驱动：运动学工具变换与状态 tool_pose 同步更新。
+         *
+         * @param id 工具坐标系编号 [0~14]
+         * @return 错误码
+         */
+        virtual int SetToolIndex(int id) = 0;
+
     };
 
     // 采用工厂模式

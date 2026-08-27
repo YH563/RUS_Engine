@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 #include <fstream>
 #include <sstream>
 
@@ -53,6 +54,35 @@ namespace RusDriverNode {
         // 执行指令文件
         bool run_script(const std::string& path);
 
+        // === 工具坐标系配置持久化 ===
+
+        /**
+         * @brief 从 tool_coords_file 加载工具坐标系配置（不存在时用内置默认并创建文件）
+         *
+         * 配置格式（简单 yaml）：
+
+         *   tool_coords:
+
+         *     0: [x,y,z,rx,ry,rz]
+
+         *     ...
+
+         *   tool_index: N
+
+         */
+        void load_tool_coords();
+
+        /** @brief 将内存工具坐标系表与当前索引写回 tool_coords_file（持久化，防重启丢失） */
+        bool save_tool_coords();
+
+        /**
+         * @brief 初始化工具坐标系：批量 SetToolCoord 写入驱动 + SetToolIndex 生效
+         *
+         * 真实驱动：将配置写入控制器（机械臂重启后可恢复）；
+         * 仿真驱动：填充本地工具变换矩阵表并同步运动学。
+         */
+        void init_tool_coords();
+
         // 驱动实例
         std::unique_ptr<RusRobotDriver::IRobotDriver> driver_;
         bool is_sim_{false};
@@ -60,6 +90,11 @@ namespace RusDriverNode {
 
         // 文件路径参数（由构造函数 declare_parameter，供 dispatch 使用）
         std::string script_path_;
+
+        // 工具坐标系配置（索引 → [x,y,z,rx,ry,rz]，m/rad）
+        std::vector<std::vector<double>> tool_coords_;
+        int tool_index_param_{0};     // 当前工具坐标系索引（持久化）
+        std::string tool_coords_file_;  // 工具坐标系配置文件路径
 
         // 安全获取仿真驱动引用（仅在 is_sim_==true 时调用，实现在 .cpp）
         RusSimRobotDriver::RobotSimDriver& sim_driver();

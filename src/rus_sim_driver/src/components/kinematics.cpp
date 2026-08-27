@@ -10,18 +10,27 @@ namespace RusRobotDriver {
         double flange_offset)
         : ki_model_(std::move(ki_model))
         , flange_offset_(flange_offset)
-    {}
+    {
+        // 工具变换初始为单位阵（工具0 = 法兰坐标系）。
+        // flange_offset 属于法兰坐标定义（模型末端 wrist3_link + 偏移 = 法兰），
+        // 不并入工具变换；工具变换纯粹表示「工具/探头相对法兰」。
+        tool_transform_.setIdentity();
+    }
 
-    // ── ForwardKinematics — 正运动学（含法兰偏移补偿） ──
+    // ── ForwardKinematics — 正运动学 ──
+    //   T_flange = fwdkin(q) × T_flangeOffset（模型末端 + 偏移 = 法兰坐标）
+    //   T_tcp    = T_flange × T_tool（工具/探头相对法兰）
     Eigen::Matrix4d KinematicsSolver::ForwardKinematics(const Eigen::VectorXd& joint_pos) const
     {
         Eigen::Matrix4d T = ki_model_->fwdkin_Eigen(joint_pos);
-
+        // 模型末端(wrist3_link) + 法兰偏移 = 法兰位姿
         if (flange_offset_ != 0.0) {
             T(0, 3) += flange_offset_ * T(0, 2);
             T(1, 3) += flange_offset_ * T(1, 2);
             T(2, 3) += flange_offset_ * T(2, 2);
         }
+        std::lock_guard<std::mutex> lock(mtx_);
+        T = T * tool_transform_;
         return T;
     }
 
@@ -53,10 +62,13 @@ namespace RusRobotDriver {
         return J;
     }
 
-    // ── InverseKinematics — 逆运动学（含法兰偏移补偿） ──
+    // ── InverseKinematics — 逆运动学 ──
+    //   T_flange = T_tcp × inv(T_tool)（TCP → 法兰）
+    //   T_wrist3 = T_flange × inv(T_flangeOffset)（去法兰偏移 → 模型末端）
     IKS::IK_Solution KinematicsSolver::InverseKinematics(const Eigen::Matrix4d& pose) const
     {
-        Eigen::Matrix4d T = pose;
+        std::lock_guard<std::mutex> lock(mtx_);
+        Eigen::Matrix4d T = pose * tool_transform_.inverse();
         if (flange_offset_ != 0.0) {
             T(0, 3) -= flange_offset_ * T(0, 2);
             T(1, 3) -= flange_offset_ * T(1, 2);
@@ -96,6 +108,20 @@ namespace RusRobotDriver {
         for (size_t i = 0; i < ik.Q[best_idx].size(); ++i)
             q_out(i) = ik.Q[best_idx][i];
         return best_idx;
+    }
+
+    // ── SetToolTransform — 设置工具坐标系变换（TCP 相对法兰），线程安全 ──
+    void KinematicsSolver::SetToolTransform(const Eigen::Matrix4d& T)
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        tool_transform_ = T;
+    }
+
+    // ── tool_transform — 当前工具变换访问器 ──
+    Eigen::Matrix4d KinematicsSolver::tool_transform() const
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        return tool_transform_;
     }
 
 }  // namespace RusRobotDriver

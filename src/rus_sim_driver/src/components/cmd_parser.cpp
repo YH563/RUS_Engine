@@ -112,6 +112,12 @@ namespace RusRobotDriver {
                 cmd.coord.push_back(args[i]);
             return cmd;
         }
+        if (name == kSetToolIndex) {
+            SetToolIndexCmd cmd;
+            cmd.id = args.empty() ? 0 : static_cast<int>(args[0]);
+            return cmd;
+        }
+        if (name == kGetToolCoords) return GetToolCoordsCmd{};
 
         // ── 仿真控制（仅 Sim 驱动） ──
         if (name == kSetTimeSpeed)   return SetTimeSpeedCmd{args.empty() ? 1.0 : args[0]};

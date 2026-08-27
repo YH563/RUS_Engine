@@ -120,6 +120,8 @@ namespace RusPerception {
 
     void PerceptionNode::on_driver_state(const RobotStateMsg::SharedPtr msg)
     {
+        // 深度相机变换矩阵相对法兰：直接用法兰位姿（驱动已含模型法兰偏移补偿）。
+        // 感知模块不依赖工具坐标系（TCP）；相机位姿 = 法兰 × 相机相对法兰（感知侧另行标定）。
         if (!msg || msg->flange_pos.size() < 6) return;
 
         const geometry_msgs::msg::Pose pose = RusUtils::FlangePosToPose(msg->flange_pos);

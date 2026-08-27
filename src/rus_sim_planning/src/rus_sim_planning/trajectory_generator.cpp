@@ -59,7 +59,7 @@ namespace RusSimPlanning {
         return std::cref(trajectory_);
     }
 
-    // ---- GenerateTrajectory — 生成起点→终点的探头扫查轨迹（法兰↔探头变换） ----
+    // ---- GenerateTrajectory — 生成起点→终点的探头（TCP）扫查轨迹 ----
     bool TrajectoryGenerator::GenerateTrajectory(const Pose& start, const Pose& goal)
     {
         // 清空内部轨迹
@@ -76,18 +76,16 @@ namespace RusSimPlanning {
         start_pose_ = start;
         goal_pose_  = goal;
 
-        // 起终点为法兰坐标；探头安装在机械臂末端，点云由探头扫查得到，
-        // 先把法兰位姿转探头位姿，用探头位置在点云上找最近点
-        auto start_probe = FlangeToProbe(start, parameter_.probe_to_flange);
-        auto goal_probe  = FlangeToProbe(goal,  parameter_.probe_to_flange);
+        // 起终点即 TCP 位姿（基座下）；工具/探头坐标系变换由驱动内部管理，
+        // planning 直接用 TCP 位置在点云上找最近点
         RCLCPP_INFO(rclcpp::get_logger(class_name_),
-            "start_probe: (%.3f, %.3f, %.3f)",
-            start_probe.position.x, start_probe.position.y, start_probe.position.z);
+            "start_tcp: (%.3f, %.3f, %.3f)",
+            start.position.x, start.position.y, start.position.z);
         RCLCPP_INFO(rclcpp::get_logger(class_name_),
-            "goal_probe: (%.3f, %.3f, %.3f)",
-            goal_probe.position.x, goal_probe.position.y, goal_probe.position.z);
-        int start_idx = find_nearest_point(Point(start_probe.position.x, start_probe.position.y, start_probe.position.z));
-        int end_idx   = find_nearest_point(Point(goal_probe.position.x,  goal_probe.position.y,  goal_probe.position.z));
+            "goal_tcp: (%.3f, %.3f, %.3f)",
+            goal.position.x, goal.position.y, goal.position.z);
+        int start_idx = find_nearest_point(Point(start.position.x, start.position.y, start.position.z));
+        int end_idx   = find_nearest_point(Point(goal.position.x,  goal.position.y,  goal.position.z));
 
         // 1. 生成初始轨迹
         if (!generate_origin_path(start_idx, end_idx)) {
@@ -103,8 +101,8 @@ namespace RusSimPlanning {
         }
         int m = static_cast<int>(origin_path_.size());
 
-        // 路径点（点云表面）即探头接触点：法线/切向量生成探头姿态，
-        // 再经 探头→法兰 变换后作为法兰位姿输出给驱动
+        // 路径点（点云表面）即 TCP 接触点：法线/切向量生成 TCP 姿态，
+        // 直接作为 TCP 位姿输出给驱动（工具坐标系变换由驱动内部完成）
         auto convert = [m, this]() {
             // 先计算每点原始切线（前后差分），再做滑动平均消除方向突变
             // （局部差分在急转弯处切线突变 → GenerateQuaternion 姿态突变 → 伺服 IK 解跳变）
@@ -148,8 +146,8 @@ namespace RusSimPlanning {
                 temp_pose.orientation.y = q.y();
                 temp_pose.orientation.z = q.z();
                 temp_pose.orientation.w = q.w();
-                // 探头接触点 → 法兰位姿
-                this->trajectory_.push_back(ProbeToFlange(temp_pose, parameter_.probe_to_flange));
+                // TCP 接触点位姿直接作为轨迹点（驱动内部按工具坐标系处理）
+                this->trajectory_.push_back(temp_pose);
             }
         };
 

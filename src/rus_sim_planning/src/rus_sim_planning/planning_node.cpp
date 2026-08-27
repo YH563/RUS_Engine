@@ -40,18 +40,7 @@ namespace RusSimPlanning {
         param.lambda        = declare_parameter<double>("lambda", 0.63);
         param.mu            = declare_parameter<double>("mu", -0.65);
 
-        // 法兰→探头 变换矩阵（16 元素行优先；探头安装在机械臂末端待标定，未配置则用单位矩阵）
-        std::vector<double> empty_vec;  // 空参数默认值（避免 {} 歧义为 ParameterDescriptor）
-        std::vector<double> probe_to_flange = declare_parameter<std::vector<double>>("probe_to_flange", empty_vec);
-        if (probe_to_flange.size() == 16) {
-            param.probe_to_flange.row(0) << probe_to_flange[0], probe_to_flange[1], probe_to_flange[2], probe_to_flange[3];
-            param.probe_to_flange.row(1) << probe_to_flange[4], probe_to_flange[5], probe_to_flange[6], probe_to_flange[7];
-            param.probe_to_flange.row(2) << probe_to_flange[8], probe_to_flange[9], probe_to_flange[10], probe_to_flange[11];
-            param.probe_to_flange.row(3) << probe_to_flange[12], probe_to_flange[13], probe_to_flange[14], probe_to_flange[15];
-        } else {
-            RCLCPP_WARN(get_logger(), "probe_to_flange 参数不足 16 个（实际 %zu），使用单位矩阵（探头与法兰重合）",
-                probe_to_flange.size());
-        }
+        // 工具坐标系变换由驱动内部统一管理（见驱动 tool_coords 配置），planning 不再维护探头标定
         generator_.SetParameter(param);
 
         // ── 数据获取：点云订阅 ──
@@ -223,7 +212,8 @@ namespace RusSimPlanning {
         state.joint_vel  = to_eig(msg->joint_vel);
         state.joint_acc  = to_eig(msg->joint_acc);
         state.effort     = to_eig(msg->effort);
-        state.flange_pos = to_eig(msg->flange_pos);
+        // 当前 TCP 位姿（驱动已按工具坐标系计算），作为规划起点参考
+        state.flange_pos = to_eig(msg->tool_pose.size() >= 6 ? msg->tool_pose : msg->flange_pos);
         state.timestamp  = rclcpp::Time(msg->header.stamp).seconds();
         interpolator_.SetRobotState(state);
     }

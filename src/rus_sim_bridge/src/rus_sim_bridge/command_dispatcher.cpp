@@ -67,6 +67,8 @@ namespace rus_sim_bridge {
         registry_.Register(CmdName::kSetToolCalibPoint, {Module::DRIVER});
         registry_.Register(CmdName::kComputeToolCalib,  {Module::DRIVER});
         registry_.Register(CmdName::kSetToolCoord,      {Module::DRIVER});
+        registry_.Register(CmdName::kSetToolIndex,      {Module::DRIVER});
+        registry_.Register(CmdName::kGetToolCoords,     {Module::DRIVER});
 
         // ── 业务 / 状态指令（默认自动模式：planning 持有动作状态；set_mode 可切手动直控 driver）──
         // stop = 急停：安全关键，必须直接到达 driver；自动模式同时扇出 planning 停伺服循环。

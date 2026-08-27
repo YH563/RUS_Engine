@@ -72,6 +72,8 @@ namespace RusRobotDriver {
         int id = 0;                                           // 坐标系编号 [0~14]
         std::vector<double> coord;                            // 工具相对法兰位姿 [x,y,z,rx,ry,rz]（m/rad）
     };
+    struct SetToolIndexCmd  { int id = 0; };                   // 切换当前工具坐标系索引
+    struct GetToolCoordsCmd {};                                // 查询工具坐标系表
 
     // ── 仿真控制（仅 Sim 驱动） ──
     struct SetTimeSpeedCmd    { double speed; };
@@ -102,6 +104,7 @@ namespace RusRobotDriver {
 
         // 工具坐标系 / 标定
         SetToolCalibPointCmd,  ComputeToolCalibCmd,  SetToolCoordCmd,
+        SetToolIndexCmd, GetToolCoordsCmd,
 
         // 仿真控制
         SetTimeSpeedCmd,   GetTimeSpeedCmd,

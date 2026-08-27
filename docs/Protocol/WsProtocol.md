@@ -223,7 +223,7 @@ JSON 头示例：
 | `is_motion_done` | 无 | [0/1] | 运动是否完成（servo_end 后活跃伺服段已清理，正确返回 1） |
 | `switch_driver` | [type, ip1, ip2, ip3, ip4] | 空 | 切换 sim(0) / real(1)，IP 四个十进制段 |
 | `movej` | [q1..q6, speed?, acc?] | 空 | 关节运动（≥6 个参数） |
-| `movel` | [x,y,z,rx,ry,rz, speed?, acc?] | 空 | 笛卡尔直线运动（≥6 个参数） |
+| `movel` | [x,y,z,rx,ry,rz, speed?, acc?] | 空 | 笛卡尔直线运动（≥6 个参数；目标为 TCP 位姿，基座下 m/rad，工具坐标变换由驱动内部处理） |
 | `servoj` | [q1..q6] | 空 | 关节伺服（≥6 个参数） |
 | `servo_cart` | [x,y,z,rx,ry,rz] | 空 | 笛卡尔伺服（≥6 个参数） |
 | `start_jog` | [ref, axis, dir, speed%, acc%, max_dis?] | 空 | 开始点动（≥5 个参数） |
@@ -237,6 +237,11 @@ JSON 头示例：
 | `get_sim_time` | 无 | [t] | 查询仿真时间 |
 | `step_once` | 无 | 空 | 单步仿真 |
 | `get_frame_rate` | 无 | [hz] | 查询帧率 |
+| `set_tool_calib_point` | [point_num] | 空 | 六点法标定：记录第 N 个工具参考点（1~6，TCP 对准同一尖点） |
+| `compute_tool_calib` | 无 | [x,y,z,rx,ry,rz] | 六点法标定：计算工具坐标系（TCP 相对法兰，m/rad，计算在驱动内部完成） |
+| `set_tool_coord` | [id, x,y,z,rx,ry,rz] | 空 | 设置工具坐标系并生效（TCP 相对法兰，m/rad），同时持久化到配置文件 |
+| `set_tool_index` | [id] | 空 | 切换当前工具坐标系索引（0=法兰，N=工具 N），运动参考系随之切换并持久化 |
+| `get_tool_coords` | 无 | [index, count, id0(6值), ...] | 查询工具坐标系表与当前索引 |
 
 **手动模式附加指令**（`set_mode [0]` 下 `pause`/`resume`/`reset`/`query_motion_done` 也路由到此）：
 

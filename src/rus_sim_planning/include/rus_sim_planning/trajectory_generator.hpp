@@ -8,12 +8,11 @@
 //    2. Dijkstra 求起点→终点的初始路径
 //    3. 法线估计 + 牛顿迭代优化（M Δp = -M p）
 //    4. 定向投影回点云 + Taubin 平滑
-//  输出：末端（法兰）位姿轨迹（Trajectory = std::vector<Pose>），
+//  输出：末端（TCP）位姿轨迹（Trajectory = std::vector<Pose>），
 //        由调用方交给插值计算模块稠密化后执行。
-//  说明：轨迹按探头扫查设计。探头安装在机械臂末端（待标定，probe_to_flange）：
-//        起终点（法兰坐标）经 法兰→探头 变换后在点云上找最近点规划路径；
-//        输出路径点（探头接触点）经 探头→法兰 变换后作为法兰位姿交给驱动执行。
-//        仅去掉 moveit 时代额外的末端偏移（flange_offset）。
+//  说明：轨迹按探头（TCP）扫查设计。起终点为 TCP 位姿（基座下），
+//        直接在点云上找最近点规划路径；输出路径点（点云表面接触点 + 姿态）
+//        即 TCP 位姿，直接交给驱动执行（工具坐标系变换由驱动内部统一管理）。
 // ════════════════════════════════════════════════════════════════════
 
 #include <functional>
@@ -40,8 +39,7 @@
 namespace RusSimPlanning {
 
     // 通用位姿工具转发（实现见 rus_sim_utils/utils.hpp）
-    using RusUtils::FlangeToProbe;
-    using RusUtils::ProbeToFlange;
+    // 注：工具/探头坐标系变换已收进驱动内部管理，planning 不再做法兰↔工具变换
     using RusUtils::PoseToMatrix4d;
     using RusUtils::Matrix4dToPose;
     using RusUtils::MakePose;
@@ -91,7 +89,6 @@ namespace RusSimPlanning {
         bool use_smoothing = true;   // 是否开启平滑
         double lambda = 0.63;        // Taubin 平滑参数
         double mu = -0.65;           // Taubin 平滑参数
-        Matrix4d probe_to_flange = Matrix4d::Identity();  // 法兰→探头 变换矩阵（探头待标定）
     };
 
     /**
@@ -123,12 +120,12 @@ namespace RusSimPlanning {
         /**
          * @brief 生成起点→终点的轨迹
          *
-         * 按探头扫查设计：起终点为法兰坐标，经 法兰→探头 变换后在点云上找
-         * 最近点规划路径；输出路径点（探头接触点）经 探头→法兰 变换后
-         * 作为法兰位姿交给驱动执行。
+         * 按探头（TCP）扫查设计：起终点为 TCP 位姿（基座下），直接在点云上找
+         * 最近点规划路径；输出路径点（点云表面探头接触点 + 姿态）即 TCP 位姿，
+         * 直接交给驱动执行（工具坐标系变换由驱动内部管理）。
          *
-         * @param start 起点位姿（法兰坐标）
-         * @param goal  终点位姿（法兰坐标）
+         * @param start 起点位姿（TCP 坐标，基座下）
+         * @param goal  终点位姿（TCP 坐标，基座下）
          * @return true 生成成功；false 未初始化 / 初始路径失败 / 终点不可达
          */
         bool GenerateTrajectory(const Pose& start, const Pose& goal);

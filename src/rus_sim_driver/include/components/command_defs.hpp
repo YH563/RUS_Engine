@@ -59,6 +59,8 @@ namespace RusRobotDriver {
         inline constexpr std::string_view kSetToolCalibPoint = "set_tool_calib_point";
         inline constexpr std::string_view kComputeToolCalib  = "compute_tool_calib";
         inline constexpr std::string_view kSetToolCoord      = "set_tool_coord";
+        inline constexpr std::string_view kSetToolIndex      = "set_tool_index";
+        inline constexpr std::string_view kGetToolCoords     = "get_tool_coords";
 
     }  // namespace Cmd
     
