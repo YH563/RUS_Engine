@@ -3,7 +3,7 @@
     # ── 驱动类型 ──
     # "sim"  — 仿真驱动（默认，配合 RobotSimDriver）
     # "real" — 真实机器人驱动（需设置 robot_ip）
-    driver_type: "sim"
+    driver_type: "real"
 
     # ── 机器人 IP（仅 real 模式需要） ──
     robot_ip: "192.168.58.2"
@@ -11,5 +11,12 @@
     # ── 录制 / 回放 / 脚本文件路径 ──
     script_path:   ""
 
-    # ── 工具坐标系配置文件路径（持久化，防机械臂重启丢失；留空则用 ~/.rus_sim/tool_coords.yaml）──
+    # ── 工具坐标系（TCP 相对法兰，m/rad）──
+    # 每 6 个一组 [x, y, z, rx, ry, rz]，索引从 0 开始；0 = 法兰坐标系（恒等）
+    # 由六点标定 / set_tool_coord 在线更新，运行时写回 tool_coords_file 缓存
+    tool_coords: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                  -0.0127, -0.0117, 0.2204, 0.0432, 0.0608, -2.3443]
+    tool_index: 1
+
+    # ── 工具坐标系运行时缓存文件（set_tool_coord / set_tool_index 写回；留空则用 ~/.rus_sim/tool_coords.yaml）──
     tool_coords_file: ""

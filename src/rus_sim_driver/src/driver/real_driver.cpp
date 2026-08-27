@@ -2,6 +2,7 @@
 #include "robot.h"
 #include "robot_types.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -27,11 +28,34 @@ namespace RusRealRobotDriver {
             }
         }
 
+        // DescPose (mm/deg) → 齐次矩阵 (m/rad)；固定轴 XYZ，R = Rz·Ry·Rx
+        Eigen::Matrix4d desc_pose_to_matrix(const DescPose& p)
+        {
+            Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+            T.block<3, 3>(0, 0) =
+                (Eigen::AngleAxisd(p.rpy.rz * kDeg2Rad, Eigen::Vector3d::UnitZ())
+               * Eigen::AngleAxisd(p.rpy.ry * kDeg2Rad, Eigen::Vector3d::UnitY())
+               * Eigen::AngleAxisd(p.rpy.rx * kDeg2Rad, Eigen::Vector3d::UnitX())).toRotationMatrix();
+            T.block<3, 1>(0, 3) << p.tran.x * kMm2M, p.tran.y * kMm2M, p.tran.z * kMm2M;
+            return T;
+        }
+
+        // 齐次矩阵 → [x,y,z,rx,ry,rz] (m/rad)
+        void matrix_to_pose6(const Eigen::Matrix4d& T, Eigen::VectorXd& pose6)
+        {
+            const Eigen::Matrix3d R = T.block<3, 3>(0, 0);
+            pose6.resize(6);
+            pose6 << T(0, 3), T(1, 3), T(2, 3),
+                std::atan2(R(2, 1), R(2, 2)),
+                std::asin(-R(2, 0)),
+                std::atan2(R(1, 0), R(0, 0));
+        }
+
         // SDK 状态（fairino）→ 通用 RobotState；角度 度 → 弧度，位置 mm → m
         RusRobotDriver::RobotState convert_sdk_state(
             JointPos& jPos, float speed[6], float acc[6],
             float torques[6], DescPose& flange, int tool_index,
-            const DescPose& tcp, float time_ms)
+            const Eigen::VectorXd& tool_pose, float time_ms)
         {
             RusRobotDriver::RobotState s;
 
@@ -41,12 +65,9 @@ namespace RusRealRobotDriver {
                 flange.rpy.rx * kDeg2Rad, flange.rpy.ry * kDeg2Rad,
                 flange.rpy.rz * kDeg2Rad;
 
-            // 工具坐标系信息：当前工具号 + TCP 基座位姿（mm/deg → m/rad）
+            // 工具坐标系信息：当前工具索引 + TCP 基座位姿（本地计算：法兰 × 工具变换）
             s.tool_index = tool_index;
-            s.tool_pose.resize(6);
-            s.tool_pose << tcp.tran.x * kMm2M, tcp.tran.y * kMm2M, tcp.tran.z * kMm2M,
-                tcp.rpy.rx * kDeg2Rad, tcp.rpy.ry * kDeg2Rad,
-                tcp.rpy.rz * kDeg2Rad;
+            s.tool_pose = tool_pose;
 
             // 关节位置 / 速度 / 加速度，deg / (deg/s) / (deg/s²) → rad / (rad/s) / (rad/s²)
             s.joint_pos = Eigen::Map<Eigen::VectorXd>(jPos.jPos, 6) * kDeg2Rad;
@@ -104,7 +125,6 @@ namespace RusRealRobotDriver {
         float torques[6];
         DescPose flange;
         int tool_index = 0;
-        DescPose tcp;
         float time_ms;
 
         // 任一查询失败立即返回错误码，避免把脏数据当真实状态发布
@@ -118,15 +138,23 @@ namespace RusRealRobotDriver {
         if (ret != 0) return ret;
         ret = robot.GetActualToolFlangePose(flag, &flange);
         if (ret != 0) return ret;
-        // 工具坐标系信息：当前工具号 + TCP 基座位姿（直接读，无需反推）
-        ret = robot.GetActualTCPNum(flag, &tool_index);
-        if (ret != 0) return ret;
-        ret = robot.GetActualTCPPose(flag, &tcp);
-        if (ret != 0) return ret;
+        // 当前工具索引 = 驱动本地（set_tool_index 设置，MoveJ/MoveL 实际使用的工具号）
+        tool_index = tool_index_.load();
         ret = robot.GetSystemClock(&time_ms);
         if (ret != 0) return ret;
 
-        robot_state = convert_sdk_state(jPos, speed, acc, torques, flange, tool_index, tcp, time_ms);
+        // tool_pose = 法兰 × 本地工具变换（与配置一致；控制器 GetActualTCPPose 恒按工具 0 计算，不可用）
+        Eigen::Matrix4d T_flange = desc_pose_to_matrix(flange);
+        Eigen::Matrix4d T_tcp;
+        {
+            std::lock_guard<std::mutex> lock(tool_mtx_);
+            const int tidx = std::min<int>(tool_index, static_cast<int>(tool_transforms_.size()) - 1);
+            T_tcp = T_flange * tool_transforms_[static_cast<size_t>(tidx)];
+        }
+        Eigen::VectorXd tcp_pose6;
+        matrix_to_pose6(T_tcp, tcp_pose6);
+
+        robot_state = convert_sdk_state(jPos, speed, acc, torques, flange, tool_index, tcp_pose6, time_ms);
         return 0;
     }
 
@@ -139,13 +167,19 @@ namespace RusRealRobotDriver {
         for (int i = 0; i < 6; ++i)
             jp.jPos[i] = joint_command.target(i) * kRad2Deg;  // rad → deg
 
+        // 注意：SDK MoveJ 内部对指针参数（desc_pos/epos/offset_pos）不做判空直接解引用，
+        // 关节空间运动也必须传有效对象，否则空指针 → 段错误（SIGSEGV）崩溃。
+        DescPose desc;               // 关节运动不使用，仅保证 SDK 不崩溃
+        ExaxisPos epos(0, 0, 0, 0);
+        DescPose offset(0, 0, 0, 0, 0, 0);
+
         // vel/acc：比例 [0~1] → 百分比 [0~100]；ovl=100 不额外缩放；
         // blendT=0 非阻塞（立即返回，运动由控制器队列执行，完成状态用 IsMotionDone 轮询）
         // tool 参数 = 当前工具坐标系索引（0=法兰，N=工具 N），运动参考系随索引切换
-        return robot.MoveJ(&jp, nullptr, tool_index_.load(), 0,
+        return robot.MoveJ(&jp, &desc, tool_index_.load(), 0,
             static_cast<float>(joint_command.speed * 100.0),
             static_cast<float>(joint_command.acceleration * 100.0),
-            100.0f, nullptr, 0.0f, 0, nullptr);
+            100.0f, &epos, 0.0f, 0, &offset);
     }
 
     // 笛卡尔空间直线运动
@@ -161,12 +195,18 @@ namespace RusRealRobotDriver {
         dp.rpy.ry = desc_command.target(4) * kRad2Deg;
         dp.rpy.rz = desc_command.target(5) * kRad2Deg;
 
+        // 注意：SDK MoveL 内部对指针参数（joint_pos/epos/offset_pos）不做判空直接解引用，
+        // 笛卡尔运动也必须传有效对象，否则空指针 → 段错误（SIGSEGV）崩溃。
+        JointPos jp;                 // 笛卡尔运动不使用，仅保证 SDK 不崩溃
+        ExaxisPos epos(0, 0, 0, 0);
+        DescPose offset(0, 0, 0, 0, 0, 0);
+
         // blendR=0 非阻塞，与 MoveJ 一致
         // tool 参数 = 当前工具坐标系索引；目标 desc_pos 为 TCP 基座位姿，SDK 按工具变换计算法兰目标
-        return robot.MoveL(nullptr, &dp, tool_index_.load(), 0,
+        return robot.MoveL(&jp, &dp, tool_index_.load(), 0,
             static_cast<float>(desc_command.speed * 100.0),
             static_cast<float>(desc_command.acceleration * 100.0),
-            100.0f, 0.0f, nullptr, 0, 0, nullptr);
+            100.0f, 0.0f, &epos, 0, 0, &offset);
     }
 
     // 伺服运动启动
@@ -370,10 +410,25 @@ namespace RusRealRobotDriver {
         DescPose pose(
             coord[0] * kM2Mm, coord[1] * kM2Mm, coord[2] * kM2Mm,
             coord[3] * kRad2Deg, coord[4] * kRad2Deg, coord[5] * kRad2Deg);
+        // 本地维护工具变换表（GetCurrentState 计算 tool_pose 用）
+        {
+            std::lock_guard<std::mutex> lock(tool_mtx_);
+            if (tool_transforms_.size() <= static_cast<size_t>(id))
+                tool_transforms_.resize(static_cast<size_t>(id) + 1, Eigen::Matrix4d::Identity());
+            Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+            T.block<3, 3>(0, 0) =
+                (Eigen::AngleAxisd(coord[5], Eigen::Vector3d::UnitZ())
+               * Eigen::AngleAxisd(coord[4], Eigen::Vector3d::UnitY())
+               * Eigen::AngleAxisd(coord[3], Eigen::Vector3d::UnitX())).toRotationMatrix();
+            T.block<3, 1>(0, 3) << coord[0], coord[1], coord[2];
+            tool_transforms_[static_cast<size_t>(id)] = T;
+        }
         // type=0 工具坐标系, install=0 机器人末端, toolID=0, loadNum=0
         int rtn = robot.SetToolCoord(id, &pose, 0, 0, 0, 0);
         if (rtn != 0)
-            fprintf(stderr, "[RobotRealDriver] SetToolCoord(id=%d) 失败 错误码=%d\n", id, rtn);
+            fprintf(stderr,
+                "[RobotRealDriver] SetToolCoord(id=%d) 控制器返回错误码=%d (%s)；请确认机器人已上使能、处于自动模式且空闲\n",
+                id, rtn, rpc_error_str(rtn));
         return rtn;
     }
     // 切换当前工具坐标系索引（运动参考系随之切换：0=法兰，N=工具 N）
@@ -387,4 +442,4 @@ namespace RusRealRobotDriver {
         return 0;
     }
 
-}
+}  // namespace RusRealRobotDriver

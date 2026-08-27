@@ -34,6 +34,10 @@ namespace RusRobotDriver {
         // 控制机器人上使能或下使能，state 0-下使能，1-上使能
         virtual int RobotEnable(uint8_t state) = 0;
 
+        // 控制机器人手自动模式切换，mode 0-自动模式，1-手动模式
+        // （部分配置类指令如 SetToolCoord 要求自动模式）
+        virtual int SetMode(int mode) = 0;
+
         // 获取当前的机械臂状态，flag 0-阻塞，1-非阻塞
         virtual int GetCurrentState(uint8_t flag, RobotState& robot_state) = 0;
 

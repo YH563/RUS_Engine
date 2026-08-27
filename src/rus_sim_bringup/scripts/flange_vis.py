@@ -6,6 +6,7 @@
 #    · TF  base_link → flange       法兰坐标系（flange_pos，XYZABC m/rad）
 #    · TF  base_link → camera_link  相机坐标系（法兰 × 相机相对法兰矩阵）
 #    · TF  base_link → tool_tcp     当前工具坐标系（tool_pose，可选 --no-tool）
+#    · TF  flange    → tool_calib   六点标定结果（TCP 相对法兰，可选 --tool-calib）
 #    · Marker 球（法兰位置）+ 蓝色箭头（法兰 z 轴方向，探头朝向）
 #
 #  相机相对法兰矩阵默认取实测标定值（4x4 行优先，camera in flange）：
@@ -149,11 +150,12 @@ def pose_to_tf(parent, child, pose6):
 
 
 class FlangeVis(Node):
-    def __init__(self, camera_matrix=None, publish_tool=True):
+    def __init__(self, camera_matrix=None, publish_tool=True, tool_calib=None):
         super().__init__('flange_vis')
         self.camera_matrix = matrix_list_to_4x4(
             camera_matrix if camera_matrix else DEFAULT_CAMERA_TO_FLANGE)
         self.publish_tool = publish_tool
+        self.tool_calib = list(tool_calib) if tool_calib else None  # 标定结果：TCP 相对法兰 [x,y,z,rx,ry,rz]
         self.sub = self.create_subscription(
             RobotState, '/driver/state', self.on_state, 10)
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -245,6 +247,12 @@ class FlangeVis(Node):
             tool_tf.header.stamp = now
             self.tf_broadcaster.sendTransform(tool_tf)
 
+        # ── 5) TF：flange → tool_calib（六点标定结果：TCP 相对法兰，静态）──
+        if self.tool_calib:
+            calib_tf = pose_to_tf('flange', 'tool_calib', self.tool_calib)
+            calib_tf.header.stamp = now
+            self.tf_broadcaster.sendTransform(calib_tf)
+
         self.get_logger().debug(
             'flange pos=(%.3f, %.3f, %.3f) rpy=(%.3f, %.3f, %.3f) z_axis=(%.3f, %.3f, %.3f)'
             % (x, y, z, rx, ry, rz, z_axis[0], z_axis[1], z_axis[2]))
@@ -256,10 +264,13 @@ def main():
                         default=DEFAULT_CAMERA_TO_FLANGE,
                         metavar='v', help='相机相对法兰矩阵（16 元素行优先）')
     parser.add_argument('--no-tool', action='store_true', help='不发布 tool_tcp 坐标系')
+    parser.add_argument('--tool-calib', type=float, nargs=6, default=None,
+                        metavar='v',
+                        help='六点标定结果（TCP 相对法兰）[x,y,z,rx,ry,rz] m/rad，发布 flange->tool_calib')
     args = parser.parse_args()
 
     rclpy.init()
-    rclpy.spin(FlangeVis(args.camera, not args.no_tool))
+    rclpy.spin(FlangeVis(args.camera, not args.no_tool, args.tool_calib))
     rclpy.shutdown()
 
 

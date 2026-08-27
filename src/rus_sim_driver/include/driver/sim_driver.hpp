@@ -80,6 +80,9 @@ namespace RusSimRobotDriver {
          */
         int RobotEnable(uint8_t state) override { is_enabled_.store(state != 0); return 0; }
 
+        // 仿真驱动无模式概念，直接成功
+        int SetMode(int mode) override { return 0; }
+
         /**
          * @brief 获取当前机器人状态
          * 

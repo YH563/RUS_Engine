@@ -1,6 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
+#include <vector>
+
+#include <Eigen/Dense>
 
 #include "robot.h"
 #include "robot_driver.hpp"
@@ -39,6 +43,9 @@ namespace RusRealRobotDriver {
 
         // 控制机器人上使能或下使能，state 0-下使能，1-上使能
         int RobotEnable(uint8_t state) override{return robot.RobotEnable(state);}
+
+        // 控制机器人手自动模式切换，mode 0-自动模式，1-手动模式
+        int SetMode(int mode) override{return robot.Mode(mode);}
 
         /**
          * @brief 获取当前的机械臂状态
@@ -106,9 +113,8 @@ namespace RusRealRobotDriver {
 
         // 切换当前工具坐标系索引（运动参考系随之切换）
         int SetToolIndex(int id) override;
-    
-    private:
 
+    private:
         // 私有成员变量
         // robot 声明为 mutable：IsMotionDone 等 const 接口内部需要
         // 调用非 const 的 SDK 查询方法（GetRobotMotionDone）。
@@ -118,5 +124,9 @@ namespace RusRealRobotDriver {
         std::atomic<int> last_rpc_error_{0};  // 最近一次 RPC 错误码（供上层诊断连接失败原因）
         uint8_t last_jog_ref_{0};  // 最近一次点动的 SDK ref（StopJOGDecel 用），0=关节点动
         std::atomic<int> tool_index_{0};  // 当前工具坐标系索引（MoveJ/MoveL 的 SDK tool 参数）
+        // 本地工具变换表（TCP 相对法兰；SetToolCoord 维护，GetCurrentState 用它计算 tool_pose，
+        // 不依赖控制器 GetActualTCPPose——控制器无“当前工具号”设置接口，始终按工具 0 计算）
+        mutable std::mutex tool_mtx_;
+        std::vector<Eigen::Matrix4d> tool_transforms_{Eigen::Matrix4d::Identity()};
     };
 }
