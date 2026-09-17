@@ -415,58 +415,12 @@ namespace RusDriverNode {
         if (tool_coords_.empty())
             tool_coords_.push_back({0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
 
-        // 运行时持久化缓存优先（set_tool_coord / set_tool_index 写回该文件）
-        std::ifstream file(tool_coords_file_);
-        if (!file) {
-            save_tool_coords();  // 首次创建缓存
-            RCLCPP_INFO(get_logger(), "工具坐标系参数加载完成（%zu 个工具, 索引=%d），缓存: %s",
-                        tool_coords_.size(), tool_index_param_, tool_coords_file_.c_str());
-            return;
-        }
-
-        auto trim = [](std::string& s) {
-            s.erase(s.begin(), std::find_if(s.begin(), s.end(),
-                [](unsigned char c) { return !std::isspace(c); }));
-            s.erase(std::find_if(s.rbegin(), s.rend(),
-                [](unsigned char c) { return !std::isspace(c); }).base(), s.end());
-        };
-
-        std::string line;
-        while (std::getline(file, line)) {
-            trim(line);
-            if (line.empty() || line[0] == '#') continue;
-            auto colon = line.find(':');
-            if (colon == std::string::npos) continue;
-            std::string key = line.substr(0, colon);
-            std::string val = line.substr(colon + 1);
-            trim(key);
-            trim(val);
-
-            if (key == "tool_index") {
-                try { tool_index_param_ = std::stoi(val); } catch (...) {}
-                continue;
-            }
-            // 工具条目："id: [x,y,z,rx,ry,rz]"
-            if (!key.empty() && val.size() >= 2 && val.front() == '[' && val.back() == ']') {
-                std::string inner = val.substr(1, val.size() - 2);
-                std::replace(inner.begin(), inner.end(), ',', ' ');
-                std::istringstream iss(inner);
-                std::vector<double> v;
-                double d;
-                while (iss >> d) v.push_back(d);
-                if (v.size() >= 6) {
-                    int id = 0;
-                    try { id = std::stoi(key); } catch (...) { continue; }
-                    if (id >= 0 && id <= 14) {
-                        if (tool_coords_.size() <= static_cast<size_t>(id))
-                            tool_coords_.resize(static_cast<size_t>(id) + 1, {0, 0, 0, 0, 0, 0});
-                        tool_coords_[static_cast<size_t>(id)] = {v[0], v[1], v[2], v[3], v[4], v[5]};
-                    }
-                }
-            }
-        }
-        RCLCPP_INFO(get_logger(), "工具坐标系配置加载完成: %zu 个工具, 当前索引=%d",
-                    tool_coords_.size(), tool_index_param_);
+        // 参数文件（driver_params.yaml）为唯一权威来源，缓存文件不再覆盖参数。
+        // set_tool_coord / set_tool_index 仍会写回缓存（save_tool_coords 持久化运行时状态），
+        // 但重启后一律以参数文件为准，避免"参数 tool_index 改 0 却不生效"的问题。
+        save_tool_coords();
+        RCLCPP_INFO(get_logger(), "工具坐标系参数加载完成（%zu 个工具, 索引=%d），缓存: %s",
+                    tool_coords_.size(), tool_index_param_, tool_coords_file_.c_str());
     }
 
     bool DriverNode::save_tool_coords() {

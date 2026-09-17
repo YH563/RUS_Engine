@@ -104,22 +104,26 @@ namespace RusRobotDriver {
     VectorXd ServoSegment::solve_ik(const MotionCommand& cmd,
                                     const RobotState& state) const
     {
-        // cmd.target = [x, y, z, rx, ry, rz]
-        double rx = cmd.target(3);
-        double ry = cmd.target(4);
-        double rz = cmd.target(5);
-
-        double cx = std::cos(rx), sx = std::sin(rx);
-        double cy = std::cos(ry), sy = std::sin(ry);
-        double cz = std::cos(rz), sz = std::sin(rz);
-
+        // cmd.target = [x, y, z, rx, ry, rz]；若仅 [x,y,z]（保持姿态模式），姿态保持当前关节位姿对应姿态
         Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
         T(0, 3) = cmd.target(0);
         T(1, 3) = cmd.target(1);
         T(2, 3) = cmd.target(2);
-        T.block<3,3>(0, 0) << cz*cy,  cz*sy*sx - sz*cx,  cz*sy*cx + sz*sx,
-                              sz*cy,  sz*sy*sx + cz*cx,  sz*sy*cx - cz*sx,
-                              -sy,    cy*sx,             cy*cx;
+        if (cmd.target.size() >= 6) {
+            double rx = cmd.target(3);
+            double ry = cmd.target(4);
+            double rz = cmd.target(5);
+            double cx = std::cos(rx), sx = std::sin(rx);
+            double cy = std::cos(ry), sy = std::sin(ry);
+            double cz = std::cos(rz), sz = std::sin(rz);
+            T.block<3,3>(0, 0) << cz*cy,  cz*sy*sx - sz*cx,  cz*sy*cx + sz*sx,
+                                  sz*cy,  sz*sy*sx + cz*cx,  sz*sy*cx - cz*sx,
+                                  -sy,    cy*sx,             cy*cx;
+        } else {
+            // 仅位置：姿态保持当前关节位姿对应的位姿姿态
+            Eigen::Matrix4d T_now = kinematics_->ForwardKinematics(state.joint_pos);
+            T.block<3,3>(0, 0) = T_now.block<3,3>(0, 0);
+        }
 
         IKS::IK_Solution ik = kinematics_->InverseKinematics(T);
         if (ik.Q.empty())

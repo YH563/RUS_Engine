@@ -43,9 +43,9 @@ namespace RusRobotDriver {
                 start_quat_ = Eigen::Quaterniond(T_start.block<3,3>(0, 0));
             }
 
-            // 目标位姿：cmd.target = [x, y, z, rx, ry, rz]
+            // 目标位姿：cmd.target = [x, y, z, rx, ry, rz]；若仅 [x,y,z]（保持姿态模式），姿态保持起始姿态
             target_pos_ = cmd.target.segment<3>(0);
-            {
+            if (cmd.target.size() >= 6) {
                 double rx = cmd.target(3);
                 double ry = cmd.target(4);
                 double rz = cmd.target(5);
@@ -57,6 +57,9 @@ namespace RusRobotDriver {
                      sz_s*cy,  sz_s*sy_s*sx_s + cz*cx,  sz_s*sy_s*cx - cz*sx_s,
                      -sy_s,    cy*sx_s,                cy*cx;
                 target_quat_ = Eigen::Quaterniond(R);
+            } else {
+                // 仅位置：姿态保持当前运动段的起始姿态
+                target_quat_ = start_quat_;
             }
         }
 

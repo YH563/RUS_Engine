@@ -128,7 +128,8 @@ namespace RusUtils {
             static constexpr std::string_view kName = CmdName::kMoveL;
             std::vector<double> pose;                     // [x,y,z,rx,ry,rz]
             static bool ParseArgs(const std::vector<double>& a, MoveL& o) {
-                if (a.size() < 6) return false;
+                // 支持 [x,y,z]（姿态保持当前）或 [x,y,z,rx,ry,rz]（显式姿态）
+                if (a.size() < 3) return false;
                 o.pose = a;
                 return true;
             }

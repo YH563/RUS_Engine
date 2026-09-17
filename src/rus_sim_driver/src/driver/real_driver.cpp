@@ -167,46 +167,143 @@ namespace RusRealRobotDriver {
         for (int i = 0; i < 6; ++i)
             jp.jPos[i] = joint_command.target(i) * kRad2Deg;  // rad → deg
 
-        // 注意：SDK MoveJ 内部对指针参数（desc_pos/epos/offset_pos）不做判空直接解引用，
-        // 关节空间运动也必须传有效对象，否则空指针 → 段错误（SIGSEGV）崩溃。
-        DescPose desc;               // 关节运动不使用，仅保证 SDK 不崩溃
+        // SDK 旧版 MoveJ 要求 desc_pos 与 joint_pos 相互一致（控制器内部做 FK/IK 校验）。
+        // 必须先 GetForwardKin 用目标关节角算出相符的笛卡尔位姿作为 desc_pos，
+        // 否则 0 值 / 未初始化位姿与 FK 结果不符 → 控制器报错（如错误码 154）。
+        DescPose desc;
+        int fk_rtn = robot.GetForwardKin(&jp, &desc);
+        if (fk_rtn != 0) {
+            fprintf(stderr,
+                "[RobotRealDriver] MoveJ 正运动学计算失败 错误码=%d (%s)，q=[%.2f %.2f %.2f %.2f %.2f %.2f]deg\n",
+                fk_rtn, rpc_error_str(fk_rtn),
+                jp.jPos[0], jp.jPos[1], jp.jPos[2],
+                jp.jPos[3], jp.jPos[4], jp.jPos[5]);
+            return fk_rtn;
+        }
         ExaxisPos epos(0, 0, 0, 0);
         DescPose offset(0, 0, 0, 0, 0, 0);
 
         // vel/acc：比例 [0~1] → 百分比 [0~100]；ovl=100 不额外缩放；
         // blendT=0 非阻塞（立即返回，运动由控制器队列执行，完成状态用 IsMotionDone 轮询）
-        // tool 参数 = 当前工具坐标系索引（0=法兰，N=工具 N），运动参考系随索引切换
-        return robot.MoveJ(&jp, &desc, tool_index_.load(), 0,
+        // 注意：MoveJ 是关节空间运动，目标为关节角，与工具坐标系无关。
+        // GetForwardKin 返回的是法兰（tool=0）位姿，因此 tool 必须固定为 0，
+        // 与 desc_pos 坐标系一致（对齐官方示例：MoveJ 用 tool=0 + FK 位姿）。
+        // 不能沿用 tool_index_（若非 0，控制器会把法兰位姿当 tool=N 位姿校验 → 不一致报错）。
+        int rtn = robot.MoveJ(&jp, &desc, 0, 0,
             static_cast<float>(joint_command.speed * 100.0),
             static_cast<float>(joint_command.acceleration * 100.0),
             100.0f, &epos, 0.0f, 0, &offset);
+        if (rtn != 0) {
+            fprintf(stderr,
+                "[RobotRealDriver] MoveJ 失败 错误码=%d (%s)，q=[%.2f %.2f %.2f %.2f %.2f %.2f]deg "
+                "vel=%.1f acc=%.1f\n",
+                rtn, rpc_error_str(rtn),
+                jp.jPos[0], jp.jPos[1], jp.jPos[2],
+                jp.jPos[3], jp.jPos[4], jp.jPos[5],
+                static_cast<float>(joint_command.speed * 100.0),
+                static_cast<float>(joint_command.acceleration * 100.0));
+        }
+        return rtn;
     }
 
     // 笛卡尔空间直线运动
     int RobotRealDriver::MoveL(MotionCommand& desc_command)
     {
         if (!is_connected_.load()) return -1;
-        if (desc_command.target.size() < 6) return -1;
+        // 支持两种：>=6 为 [x,y,z,rx,ry,rz]（显式位姿）；==3 为 [x,y,z]（仅位置，姿态保持当前 TCP 姿态）
+        if (desc_command.target.size() < 3) return -1;
+
+        const int tool = tool_index_.load();
+
+        // 工具变换 T_tool（TCP 相对法兰；约定与 GetCurrentState 一致：T_tcp = T_flange * T_tool）
+        Eigen::Matrix4d T_tool;
+        {
+            std::lock_guard<std::mutex> lock(tool_mtx_);
+            T_tool = (tool >= 0 && static_cast<size_t>(tool) < tool_transforms_.size())
+                ? tool_transforms_[static_cast<size_t>(tool)]
+                : Eigen::Matrix4d::Identity();
+        }
+
+        // ── 目标 TCP 位姿（基座系）──
         DescPose dp;
         dp.tran.x = desc_command.target(0) * kM2Mm;  // m → mm
         dp.tran.y = desc_command.target(1) * kM2Mm;
         dp.tran.z = desc_command.target(2) * kM2Mm;
-        dp.rpy.rx = desc_command.target(3) * kRad2Deg;  // rad → deg
-        dp.rpy.ry = desc_command.target(4) * kRad2Deg;
-        dp.rpy.rz = desc_command.target(5) * kRad2Deg;
+        Eigen::Matrix4d T_tcp = desc_pose_to_matrix(dp);  // 位置已就位，旋转待定
+        if (desc_command.target.size() >= 6) {
+            dp.rpy.rx = desc_command.target(3) * kRad2Deg;  // rad → deg
+            dp.rpy.ry = desc_command.target(4) * kRad2Deg;
+            dp.rpy.rz = desc_command.target(5) * kRad2Deg;
+            T_tcp = desc_pose_to_matrix(dp);
+        } else {
+            // 仅位置：姿态保持当前 TCP 姿态（读取当前法兰位姿 + 工具变换得到当前 TCP 位姿，取其旋转）
+            DescPose flange_now;
+            int ret = robot.GetActualToolFlangePose(1, &flange_now);
+            if (ret != 0) {
+                fprintf(stderr,
+                    "[RobotRealDriver] MoveL 读取当前法兰位姿失败 错误码=%d (%s)，无法保持姿态\n",
+                    ret, rpc_error_str(ret));
+                return ret;
+            }
+            Eigen::Matrix4d T_tcp_now = desc_pose_to_matrix(flange_now) * T_tool;
+            T_tcp.block<3, 3>(0, 0) = T_tcp_now.block<3, 3>(0, 0);  // 保持旋转，位置不变
+            Eigen::VectorXd p6;
+            matrix_to_pose6(T_tcp, p6);
+            dp.rpy.rx = p6(3) * kRad2Deg;
+            dp.rpy.ry = p6(4) * kRad2Deg;
+            dp.rpy.rz = p6(5) * kRad2Deg;
+        }
 
-        // 注意：SDK MoveL 内部对指针参数（joint_pos/epos/offset_pos）不做判空直接解引用，
-        // 笛卡尔运动也必须传有效对象，否则空指针 → 段错误（SIGSEGV）崩溃。
-        JointPos jp;                 // 笛卡尔运动不使用，仅保证 SDK 不崩溃
+        // ── 换算成法兰目标：T_flange = T_tcp * T_tool⁻¹（右乘逆，与 T_tcp = T_flange * T_tool 自洽）──
+        Eigen::Matrix4d T_flange = T_tcp * T_tool.inverse();
+
+        DescPose flange_dp;
+        Eigen::VectorXd pose6;
+        matrix_to_pose6(T_flange, pose6);  // [x,y,z,rx,ry,rz]，m/rad，与 desc_pose_to_matrix 同为固定轴 XYZ
+        flange_dp.tran.x = pose6(0) * kM2Mm;
+        flange_dp.tran.y = pose6(1) * kM2Mm;
+        flange_dp.tran.z = pose6(2) * kM2Mm;
+        flange_dp.rpy.rx = pose6(3) * kRad2Deg;
+        flange_dp.rpy.ry = pose6(4) * kRad2Deg;
+        flange_dp.rpy.rz = pose6(5) * kRad2Deg;
+
+        // GetInverseKin 求出与法兰目标自洽的关节角（FK(jp) == flange_dp）
+        JointPos jp;
+        int ik_rtn = robot.GetInverseKin(0, &flange_dp, -1, &jp);
+        if (ik_rtn != 0) {
+            fprintf(stderr,
+                "[RobotRealDriver] MoveL 逆运动学计算失败 错误码=%d (%s)，flange_pos=[%.1f %.1f %.1f %.1f %.1f %.1f]，tcp_pos=[%.1f %.1f %.1f %.1f %.1f %.1f]\n",
+                ik_rtn, rpc_error_str(ik_rtn),
+                flange_dp.tran.x, flange_dp.tran.y, flange_dp.tran.z,
+                flange_dp.rpy.rx, flange_dp.rpy.ry, flange_dp.rpy.rz,
+                dp.tran.x, dp.tran.y, dp.tran.z,
+                dp.rpy.rx, dp.rpy.ry, dp.rpy.rz);
+            return ik_rtn;
+        }
         ExaxisPos epos(0, 0, 0, 0);
         DescPose offset(0, 0, 0, 0, 0, 0);
 
-        // blendR=0 非阻塞，与 MoveJ 一致
-        // tool 参数 = 当前工具坐标系索引；目标 desc_pos 为 TCP 基座位姿，SDK 按工具变换计算法兰目标
-        return robot.MoveL(&jp, &dp, tool_index_.load(), 0,
+        // SDK 要求 desc_pos 与 joint_pos 的 FK 严格一致（与 MoveJ 同构：MoveJ 用 GetForwardKin→FK(jp) 作为 desc_pos）。
+        // 因此 desc_pos 必须用「法兰目标」flange_dp（= FK(jp)），不能传 TCP 目标 dp（否则 desc_pos≠FK(jp)→74）。
+        // desc_pos 已是法兰目标，故 tool 固定传 0（法兰坐标系）——工具坐标系只在本地换算，不传入控制器内部。
+        int rtn = robot.MoveL(&jp, &flange_dp, 0, 0,
             static_cast<float>(desc_command.speed * 100.0),
             static_cast<float>(desc_command.acceleration * 100.0),
             100.0f, 0.0f, &epos, 0, 0, &offset);
+        if (rtn != 0) {
+            fprintf(stderr,
+                "[RobotRealDriver] MoveL 失败 错误码=%d (%s)，desc_pos(法兰)=[%.1f %.1f %.1f %.1f %.1f %.1f] tcp目标=[%.1f %.1f %.1f %.1f %.1f %.1f] "
+                "tool=%d vel=%.1f acc=%.1f\n",
+                rtn, rpc_error_str(rtn),
+                flange_dp.tran.x, flange_dp.tran.y, flange_dp.tran.z,
+                flange_dp.rpy.rx, flange_dp.rpy.ry, flange_dp.rpy.rz,
+                dp.tran.x, dp.tran.y, dp.tran.z,
+                dp.rpy.rx, dp.rpy.ry, dp.rpy.rz,
+                tool,
+                static_cast<float>(desc_command.speed * 100.0),
+                static_cast<float>(desc_command.acceleration * 100.0));
+        }
+        return rtn;
     }
 
     // 伺服运动启动
