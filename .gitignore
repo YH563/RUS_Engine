@@ -2,6 +2,7 @@
 build/
 install/
 log/
+records/
 .VSCodeCounter/
 .idea/
 .vscode/

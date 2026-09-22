@@ -1,0 +1,26 @@
+# 记录节点参数（rus_sim_recorder）
+# 格式规范见 docs/Protocol/RecFormat.md；体检工具：rus_sim_recorder_inspect
+recorder_node:
+  ros__parameters:
+    # ── 总开关 / 输出 ──
+    enabled: true            # false = 不订阅、不落盘（进程空转，只打印一行提示）
+    output_dir: "records"    # 输出目录（相对路径按启动工作目录解析；不存在会自动创建）
+                             #   启动日志会打印解析后的绝对路径，便于事后找文件
+    file_prefix: "run"       # 文件名：<prefix>_<时间戳>.rusrec / 滚动 <prefix>_<时间戳>_p002.rusrec
+    max_file_size_mb: 512    # 单文件大小上限（MiB），超出即封存（写尾索引）并滚动到新文件；0 = 不限
+    flush_interval_sec: 1.0  # 写缓冲落盘周期（s）：掉电最多丢这之后的数据（文件仍可扫描）
+    queue_max: 2048          # 写队列条数上限（回调 → 写线程）：满则丢新并计数，绝不阻塞发布端
+    queue_max_mb: 256        # 写队列字节上限（MiB）：防大点云帧把内存吃爆（两条上限任一命中即丢）
+    qos_depth: 20            # 订阅队列深度（reliable + volatile，与 driver / perception 发布端匹配）
+    log_period_sec: 5.0      # 统计日志周期（s）：速率 / 队列 / 丢弃 / 当前文件大小
+
+    # ── 通道 0：机械臂状态（125Hz 全量；复盘轨迹用）──
+    record_state: true
+    state_topic: "/driver/state"
+    state_max_rate_hz: 0.0   # 写入限流（Hz），0 = 不限（全量）；只想看轨迹可设 50 之类
+
+    # ── 通道 1：感知帧（SensorFrame：zstd + int16 量化的点云，scope 区分当前帧 / 地图快照）──
+    #   与 /preprocessed_cloud 同源同频：rolling / accumulate 下录到的是"规划看到的地图快照"
+    record_sensor: true
+    sensor_topic: "/sensor/pointcloud"
+    sensor_max_rate_hz: 0.0  # 同上限流；注意 rs_point_stride=1 时单帧约 1~2 MB（zstd）
