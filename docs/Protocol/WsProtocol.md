@@ -146,27 +146,43 @@
 JSON 头示例：
 
 ```json
-// 点云
-{ "type": "pointcloud", "points": 100000, "fields": ["x","y","z","intensity"],
-  "dtype": "float32", "timestamp": 1234.5, "seq": 1024 }
+// 点云（zstd 压缩；x/y/z 是 int16 量化值，必须用 range_min/max 反量化）
+{ "type": "pointcloud", "points": 307200, "fields": ["x","y","z","rgb"], "dtype": "int16",
+  "range_min": [-0.421336, -0.203074, 0.104759], "range_max": [0.593334, 0.451876, 1.900208],
+  "frame_id": "base_link", "encoding": "zstd", "scope": "frame",
+  "timestamp": 1234.5, "seq": 1024 }
 // 图像
-{ "type": "image", "width": 1920, "height": 1080, "encoding": "rgb8",
-  "step": 5760, "timestamp": 1234.6, "seq": 1024 }
+{ "type": "image", "width": 1920, "height": 1080, "image_encoding": "rgb8", "step": 5760,
+  "frame_id": "camera_color_optical_frame", "encoding": "raw", "scope": "frame",
+  "timestamp": 1234.6, "seq": 1024 }
 ```
 
 | 头字段 | 类型 | 适用 | 说明 |
 |--------|------|------|------|
 | `type` | string | 全部 | `pointcloud` / `image` / `compressed`（预留） |
-| `timestamp` | double | 全部 | 时间戳 |
-| `seq` | uint32 | 全部 | 帧序号（前端检测丢帧） |
+| `timestamp` | double | 全部 | 采集时间戳（秒，ROS 时基） |
+| `seq` | uint32 | 全部 | 帧序号（前端检测丢帧；每类型独立递增） |
+| `frame_id` | string | 全部 | 数据坐标系；点云为 `base_link`（已算好变换，前端不再做坐标变换） |
+| `encoding` | string | 全部 | **payload 压缩算法**：`zstd` / `raw`（前端按此解压，不要假设） |
+| `scope` | string | 全部 | 数据语义：`frame`（单视角当前帧）/ `map`（累积地图快照）/ `""`（未知） |
 | `points` | uint32 | 点云 | 点数 |
-| `fields` | string[] | 点云 | 分量顺序（如 x,y,z,intensity） |
-| `dtype` | string | 点云 | 数值类型（float32 / float64 / uint8 / int32） |
+| `fields` | string[] | 点云 | 分量顺序（当前固定 `x,y,z,rgb`） |
+| `dtype` | string | 点云 | `x/y/z` 的类型（当前 `int16`）；`rgb` 为 uint32 0x00RRGGBB |
+| `range_min` / `range_max` | double[3] | 点云 | int16 量化包围盒；反量化 `v = min + (q + 32768) * (max - min) / 65535` |
 | `width` / `height` | uint32 | 图像 | 宽高（像素） |
-| `encoding` | string | 图像 | rgb8 / bgr8 / mono8 ... |
+| `image_encoding` | string | 图像 | **压缩前**像素格式：rgb8 / bgr8 / mono8 ... |
 | `step` | uint32 | 图像 | 每行字节数（含 padding） |
 
-> 该通道目前**尚无数据源**，前端可先不实现；实现时按头独立解析，不依赖连续帧。
+> - **`encoding` vs `image_encoding`**：前者是压缩算法、后者是像素格式，与 ROS 侧
+>   `SensorFrame.msg` 同名同义，不要混用。
+> - **点云 payload 解压后布局**（每点 10 字节，`count = points`）：
+>   `int16 x | int16 y | int16 z | uint32 rgb`，小端；坐标须按上面的公式反量化。
+> - **生产者现状**：`rus_sim_perception` 已按本格式发布 ROS 话题 `/sensor/pointcloud`
+>   （`SensorFrame.msg`，与 `/preprocessed_cloud` 同频）；**bridge 尚未订阅转发 → /sensor
+>   通道仍空转**，前端可暂不实现。
+> - **`scope` 的必要性**：同一话题在 `mapping_mode=none` 下是当前帧、在 `rolling` /
+>   `accumulate` 下是地图快照（点数远大于单帧），前端按 `scope` 决定是"整体替换"还是
+>   "更新累积视图"。
 
 ---
 

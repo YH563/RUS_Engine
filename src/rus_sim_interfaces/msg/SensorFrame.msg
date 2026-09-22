@@ -1,6 +1,8 @@
 # 感知传感器帧（感知 → bridge → 前端 /sensor 通道）
 #
 # payload 为压缩后的字节（encoding 声明压缩算法），元数据供前端解码/渲染。
+#   · 点云坐标经 int16 量化，前端必须用 range_min/range_max 反量化才能还原真实坐标；
+#   · scope 区分"当前帧"与"累积地图快照"（同一话题两种语义）。
 # WS 线格式（JSON 头 + payload）见 rus_sim_utils/protocol.hpp（EncodeSensorFrame）。
 
 # ── 帧类型 ──
@@ -9,10 +11,12 @@ uint8 TYPE_IMAGE      = 1
 uint8 TYPE_ULTRASOUND = 2
 
 uint8   type          # TYPE_*
-string  encoding      # "zstd" / "jpeg" / "png" / "raw"
+string  encoding      # payload 压缩算法："zstd" / "raw" / "jpeg" / "png"
 builtin_interfaces/Time stamp
 uint32  seq           # 每类型独立递增（前端检测丢帧）
-string  frame_id
+string  frame_id      # 点云坐标系（如 base_link）
+string  scope         # 数据语义：""（未知）/"frame"（单视角当前帧）/"map"（累积地图快照）
+                      #   —— 常量见 rus_sim_utils/command_defs.hpp::SensorScope
 
 # ── pointcloud 元数据 ──
 uint32   points        # 点数

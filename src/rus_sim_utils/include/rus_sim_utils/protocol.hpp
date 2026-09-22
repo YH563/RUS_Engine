@@ -121,16 +121,21 @@ namespace RusUtils {
         std::string type;             // 帧类型（见 SensorType 命名空间）
         double timestamp = 0.0;
         uint32_t seq = 0;             // 帧序号（前端检测丢帧）
+        std::string frame_id;         // 数据坐标系（如 base_link；前端据此决定是否再变换）
+        std::string encoding;         // payload 压缩算法："zstd" / "raw" ...
+        std::string scope;            // 数据语义（见 SensorScope 命名空间）：frame / map / ""
 
         // ── pointcloud 元数据 ──
         uint32_t points = 0;          // 点数
-        std::vector<std::string> fields;  // 分量顺序：如 x,y,z,intensity
-        std::string dtype;            // float32 / float64 / uint8 / int32 ...
+        std::vector<std::string> fields;  // 分量顺序：如 x,y,z,rgb
+        std::string dtype;            // 量化后类型：int16 / float32 / float64 ...
+        std::vector<double> range_min;    // 量化包围盒 min [x,y,z]（int16 量化反算必需）
+        std::vector<double> range_max;    // 量化包围盒 max [x,y,z]
 
         // ── image 元数据 ──
         uint32_t width = 0;
         uint32_t height = 0;
-        std::string encoding;         // rgb8 / bgr8 / mono8 ...
+        std::string image_encoding;   // 压缩前像素格式：rgb8 / bgr8 / mono8 ...
         uint32_t step = 0;            // 每行字节数（含 padding）
 
         // ── payload ──
@@ -288,6 +293,9 @@ namespace RusUtils {
     }
 
     /// 编码感知帧 → 二进制（uint32 LE 头长度 + JSON 头 + payload）
+    /// 头字段：type / timestamp / seq / frame_id / encoding（压缩算法）/ scope，+
+    ///         点云：points / fields / dtype / range_min / range_max
+    ///         图像：width / height / image_encoding / step
     inline std::vector<uint8_t> EncodeSensorFrame(const SensorFrame& f) {
         std::string head = "{\"type\":\"" + detail::json_escape(f.type) + "\"";
 
@@ -301,14 +309,19 @@ namespace RusUtils {
         if (f.type == SensorType::kPointCloud) {
             head += ",\"points\":" + std::to_string(f.points) +
                     ",\"fields\":" + fields_json +
-                    ",\"dtype\":\"" + detail::json_escape(f.dtype) + "\"";
+                    ",\"dtype\":\"" + detail::json_escape(f.dtype) + "\"" +
+                    ",\"range_min\":" + detail::arr_to_json(f.range_min) +
+                    ",\"range_max\":" + detail::arr_to_json(f.range_max);
         } else if (f.type == SensorType::kImage) {
             head += ",\"width\":" + std::to_string(f.width) +
                     ",\"height\":" + std::to_string(f.height) +
-                    ",\"encoding\":\"" + detail::json_escape(f.encoding) + "\"" +
+                    ",\"image_encoding\":\"" + detail::json_escape(f.image_encoding) + "\"" +
                     ",\"step\":" + std::to_string(f.step);
         }
-        head += ",\"timestamp\":" + detail::dtoa(f.timestamp) +
+        head += ",\"frame_id\":\"" + detail::json_escape(f.frame_id) + "\"" +
+                ",\"encoding\":\"" + detail::json_escape(f.encoding) + "\"" +
+                ",\"scope\":\"" + detail::json_escape(f.scope) + "\"" +
+                ",\"timestamp\":" + detail::dtoa(f.timestamp) +
                 ",\"seq\":" + std::to_string(f.seq) + "}";
 
         std::vector<uint8_t> out;
@@ -327,6 +340,9 @@ namespace RusUtils {
 
         out = SensorFrame{};
         out.type = detail::find_str(head, "type");
+        out.frame_id = detail::find_str(head, "frame_id");
+        out.encoding = detail::find_str(head, "encoding");
+        out.scope = detail::find_str(head, "scope");
 
         auto num = [&](const std::string& k) -> double {
             auto pos = head.find("\"" + k + "\"");
@@ -345,6 +361,8 @@ namespace RusUtils {
         if (out.type == SensorType::kPointCloud) {
             out.points = static_cast<uint32_t>(num("points"));
             out.dtype = detail::find_str(head, "dtype");
+            out.range_min = detail::find_arr(head, "range_min");
+            out.range_max = detail::find_arr(head, "range_max");
             auto p = head.find("\"fields\"");
             if (p != std::string::npos) {
                 auto lb = head.find('[', p);
@@ -363,7 +381,7 @@ namespace RusUtils {
         } else if (out.type == SensorType::kImage) {
             out.width = static_cast<uint32_t>(num("width"));
             out.height = static_cast<uint32_t>(num("height"));
-            out.encoding = detail::find_str(head, "encoding");
+            out.image_encoding = detail::find_str(head, "image_encoding");
             out.step = static_cast<uint32_t>(num("step"));
         }
 

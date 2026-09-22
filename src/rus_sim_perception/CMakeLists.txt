@@ -17,12 +17,39 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(pcl_conversions REQUIRED)
 
-# ── 感知核心库（感知节点 + 算法模块）──
-# 节点仅做通信与调度；算法分层：
+# ── 数据源：RealSense 直连（可选；缺 librealsense2 时自动降级为 stub，其余源照常）──
+option(RUS_SIM_WITH_REALSENSE "编译 RealSense 直连数据源（需 librealsense2）" ON)
+set(RUS_REALSENSE_SOURCE src/camera/realsense_source_stub.cpp)
+if(RUS_SIM_WITH_REALSENSE)
+  find_package(realsense2 QUIET)   # librealsense2-dev 提供的 CMake config
+  if(realsense2_FOUND)
+    set(RUS_REALSENSE_SOURCE src/camera/realsense_source.cpp)
+    message(STATUS "rus_sim_perception: RealSense 直连数据源已启用（realsense2 ${realsense2_VERSION}）")
+  else()
+    find_path(REALSENSE_INCLUDE_DIR librealsense2/rs.hpp)
+    find_library(REALSENSE_LIBRARY realsense2)
+    if(REALSENSE_INCLUDE_DIR AND REALSENSE_LIBRARY)
+      set(RUS_REALSENSE_SOURCE src/camera/realsense_source.cpp)
+      message(STATUS "rus_sim_perception: RealSense 直连数据源已启用（${REALSENSE_LIBRARY}）")
+    else()
+      message(WARNING "rus_sim_perception: 未找到 librealsense2 → source=realsense 不可用"
+                      "（ros_topic / replay 照常）。安装：sudo apt install librealsense2-dev")
+    endif()
+  endif()
+endif()
+
+# ── 感知核心库（感知节点 + 采集/算法模块）──
+# 节点仅做通信与调度；分层：
+#   camera/      数据采集（RealSense 直连 / ROS 话题 / 离线回放 + 最新帧槽）
 #   components/  公共组件（位姿插值、传感器帧编码）
 #   pointcloud/  点云算法子模块（变换、滤波、建图）
 add_library(perception_core SHARED
   src/rus_sim_perception/perception_node.cpp
+  src/camera/frame_slot.cpp
+  src/camera/ros_topic_source.cpp
+  src/camera/replay_source.cpp
+  src/camera/source_factory.cpp
+  ${RUS_REALSENSE_SOURCE}
   src/components/pose_interpolator.cpp
   src/components/sensor_encoder.cpp
   src/pointcloud/spatial_transformer.cpp
@@ -39,6 +66,16 @@ target_include_directories(perception_core PUBLIC
 ament_target_dependencies(perception_core PUBLIC
   rclcpp std_msgs sensor_msgs geometry_msgs rus_sim_interfaces rus_sim_utils pcl_conversions)
 target_link_libraries(perception_core PUBLIC Eigen3::Eigen ${PCL_LIBRARIES})
+
+# ── RealSense 链接（CMake config 优先，其次手工探测的 include/lib）──
+if(RUS_REALSENSE_SOURCE STREQUAL "src/camera/realsense_source.cpp")
+  if(realsense2_FOUND)
+    target_link_libraries(perception_core PUBLIC realsense2::realsense2)
+  else()
+    target_include_directories(perception_core PUBLIC ${REALSENSE_INCLUDE_DIR})
+    target_link_libraries(perception_core PUBLIC ${REALSENSE_LIBRARY})
+  endif()
+endif()
 
 # ── zstd（压缩编码依赖；libzstd-dev 提供头文件与动态库）──
 find_path(ZSTD_INCLUDE_DIR zstd.h)

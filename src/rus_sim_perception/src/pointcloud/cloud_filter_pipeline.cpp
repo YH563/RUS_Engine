@@ -22,13 +22,19 @@ namespace RusPerception::PointCloud {
             return ok && !cloud.empty();
         };
 
+        // nan_remove 无开关：只剔 NaN/Inf（RealSense 无效深度），
+        // 是 planning 建图 KDTree 的保险，不改变有效点的观感
         if (!run("nan_remove", &CloudFilterPipeline::remove_nan)) return false;
-        if (!run("passthrough", &CloudFilterPipeline::passthrough)) return false;
+        if (param_.enable_passthrough) {
+            if (!run("passthrough", &CloudFilterPipeline::passthrough)) return false;
+        }
         // 统计滤波（KDTree 近邻开销大）：按参数开关，高频实时处理时建议关闭
         if (param_.enable_statistical) {
             if (!run("statistical", &CloudFilterPipeline::statistical)) return false;
         }
-        if (!run("voxel", &CloudFilterPipeline::voxel)) return false;
+        if (param_.enable_voxel) {
+            if (!run("voxel", &CloudFilterPipeline::voxel)) return false;
+        }
         return true;
     }
 
@@ -70,6 +76,8 @@ namespace RusPerception::PointCloud {
     bool CloudFilterPipeline::voxel(CloudRGB& cloud)
     {
         if (cloud.empty()) return false;
+        // 叶大小 ≤ 0 = 未配置：直接跳过（PCL 内部按 1/leaf_size 建索引，0 会除零出 inf）
+        if (param_.voxel_leaf_size <= 0.0f) return true;
         pcl::VoxelGrid<pcl::PointXYZRGB> vg;
         vg.setInputCloud(cloud.makeShared());
         vg.setLeafSize(param_.voxel_leaf_size, param_.voxel_leaf_size, param_.voxel_leaf_size);

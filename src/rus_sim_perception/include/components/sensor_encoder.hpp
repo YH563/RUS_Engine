@@ -48,8 +48,8 @@ namespace RusPerception {
         /**
          * @brief 点云 → 编码帧
          *
-         * 每个点 8 字节布局：int16 x/y/z（包围盒量化）+ uint8 r/g/b + 1 字节填充，
-         * 整体经 zstd 压缩。
+         * 每个点 10 字节布局：int16 x/y/z（包围盒量化，6 字节）+ uint32 rgb（0x00RRGGBB，4 字节），
+         * 整体经 zstd 压缩。前端反量化公式见 docs/Protocol/WsProtocol.md §3.3。
          *
          * @param cloud 输入点云（XYZ+RGB）
          * @param out   输出编码帧（payload 已压缩）

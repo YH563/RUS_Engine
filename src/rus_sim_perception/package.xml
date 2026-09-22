@@ -18,6 +18,10 @@
   <depend>pcl_conversions</depend>
   <depend>PCL</depend>
   <exec_depend>Eigen3</exec_depend>
+  <!-- librealsense2：RealSense 直连数据源（source=realsense）。
+       可选编译：-DRUS_SIM_WITH_REALSENSE=OFF 或未安装时自动降级为 stub，
+       ros_topic / replay 数据源不受影响。 -->
+  <depend>librealsense2</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

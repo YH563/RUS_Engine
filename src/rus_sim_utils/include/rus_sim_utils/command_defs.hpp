@@ -92,4 +92,10 @@ namespace RusUtils {
         inline constexpr std::string_view kCompressed = "compressed";
     }
 
+    // ── 感知帧数据语义（SensorFrame::scope；前端据此区分"当前帧"与"累积地图"） ──
+    namespace SensorScope {
+        inline constexpr std::string_view kFrame = "frame";  // 单视角当前帧（/perception/frame 同源）
+        inline constexpr std::string_view kMap   = "map";    // 累积地图快照（rolling/accumulate 快照）
+    }
+
 }  // namespace RusUtils

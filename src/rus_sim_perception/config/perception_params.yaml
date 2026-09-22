@@ -1,34 +1,90 @@
 # 感知节点参数（rus_sim_perception）
 perception_node:
   ros__parameters:
+    # ── 数据源（采集层，实现在 src/camera/）──
+    # realsense  RealSense 直连（librealsense2，不经 realsense2_camera）
+    #            设备独占：同一台相机不能与本包装节点同时打开
+    # ros_topic  PointCloud2 话题（realsense2_camera / 仿真 / rosbag）
+    # replay     离线 PCD 循环回放（无设备联调，走与相机完全相同的处理链）
+    # auto       启动探测：有 RealSense 设备 → realsense，否则 → ros_topic
+    source: "realsense"
+
     # ── 话题参数 ──
-    input_cloud_topic: "/camera/camera/depth/color/points"   # 输入点云话题（深度相机原始点云）
-    output_cloud_topic: "/preprocessed_cloud"                # 累积地图点云（planning 规划输入，base_link，低频全量发布）
-    frame_topic: "/perception/frame"                         # 实时帧点云（当前处理帧，高频，RViz 实时可视化）
-    sensor_cloud_topic: "/sensor/pointcloud"                 # 压缩点云帧（SensorFrame → 前端 /sensor 通路，预留）
+    input_cloud_topic: "/camera/camera/depth/color/points"   # ros_topic 源的输入点云话题（其它源不使用）
+    output_cloud_topic: "/preprocessed_cloud"                # 地图快照（rolling/accumulate）或当前帧（none）→ planning 规划输入，base_link
+    frame_topic: "/perception/frame"                         # 当前处理帧（高频，RViz 实时可视化）
+    sensor_cloud_topic: "/sensor/pointcloud"                 # 压缩点云帧（SensorFrame → 前端 /sensor 通路；bridge 转发待接）
     driver_state_topic: "/driver/state"                      # 机械臂状态话题（位姿时间对齐用）
 
+    # ── RealSense 直连参数（source=realsense）──
+    rs_serial: ""             # 设备序列号（空 = 第一台可用设备；多台相机时必填）
+    rs_width: 640             # 深度/彩色流宽高与帧率；型号不支持该组合时自动退回设备默认配置
+    rs_height: 480
+    rs_fps: 15
+    rs_align_to: "color"      # none | color | depth —— 决定点云所在光学系，须与 camera_to_flange 标定一致
+                              #   color：深度对齐到彩色（可取 RGB），点云属 camera_color_optical_frame
+                              #          —— 与旧 /camera/camera/depth/color/points 同系，原标定直接沿用
+                              #   none ：最快，点云属 camera_depth_optical_frame，且无法取 RGB（自动降级白点）
+    rs_color_mode: "rgb"      # rgb（需 rs_align_to=color）| white（白点，可省掉彩色流）
+    rs_point_stride: 1        # 像素抽稀步长：1=全分辨率(640×480≈30.7万点，与 viewer 一致)，2=≈7.7万点；点数 ≈ 1/stride²
+                              #   效果对齐阶段用 1；若 /sensor 通路的 WS 带宽吃紧，先调这里（观感代价比关体素小）
+    rs_min_depth: 0.15        # 有效深度下限（米）：更近视为无效并剔除（不会产生 (0,0,0) 鬼点）
+                              #   D435 有效最近距≈0.105m，再近本无数据，故该下限不产生可见裁剪
+    rs_max_depth: 6.0         # 有效深度上限（米）：超出视为无效。旧值 2.0 会裁掉工作范围外的场景，
+                              #   与 viewer 画面差异明显；D435 可靠量程 ~3m，6m 之外点噪声大，不建议再放宽
+    rs_decimation: false      # SDK 抽稀滤波（降分辨率采样；与 rs_point_stride 作用重叠，一般只用其一）
+    rs_spatial_filter: false  # 空间滤波（平整表面降噪，细节略模糊）
+                              #   注：要"贴合 realsense-viewer"，应优先开 SDK 侧这三项滤波（viewer 的
+                              #   Post-Processing 面板同一套算法），而不是 PCL 侧的 voxel/statistical
+    rs_temporal_filter: false # 时间滤波（静止场景降噪；运动时会有拖影）
+
+    # ── 离线回放参数（source=replay）──
+    # PCD 内容视为【相机光学系】点云，需位姿 + 标定矩阵（与 input_pcd 的 base_link 语义不同）
+    replay_path: ""                                # PCD 文件，或目录（目录内 *.pcd 按字典序循环）
+    replay_fps: 5.0                                # 回放频率（Hz）
+    replay_loop: true                              # 循环回放
+    replay_frame_id: "camera_optical_frame"
+
+    # ── 建图模式 ──
+    # none        不建图：/preprocessed_cloud 与 /sensor/pointcloud 直接发当前帧（每帧全量替换，
+    #             适合只关心最新一帧的前端；副作用：planning 退化为单视角，无累积地图）
+    # rolling     累积建图 + 超点数上限触发体素降采样（内存有界；长时间运行的默认选择）
+    # accumulate  只累积不降采样（点云最全，内存与发布耗时会随运行时间持续增长）
+    # 效果对照 realsense-viewer：直接看 /perception/frame —— 任何模式下它都是"当前帧"（单视角，
+    # 与 viewer 画面可逐像素对照）；若要连 /preprocessed_cloud、/sensor/pointcloud 也变成当前帧，
+    # 把这里临时改成 "none"（planning 会退化为单视角，对比完记得改回 rolling）。
+    # 另注：rolling 触发点数上限时地图仍会按 voxel_leaf_size 降采样，与 enable_voxel_filter 无关。
+    mapping_mode: "rolling"
+
     # ── 时间对齐 / 调度参数 ──
-    # 点云用 header.stamp、位姿用 RobotState.timestamp（生产端仿真时间），
-    # 处理时按点云采集时刻对位姿队列插值。
+    # 点云用采集时刻（RealSense 直连 = node->now()；话题源 = header.stamp），
+    # 位姿用 RobotState.timestamp，处理时按点云采集时刻对位姿队列插值。
     max_allowed_diff_sec: 0.05       # 点云与位姿最大允许时间差（秒），超差丢帧
     max_pose_cache: 256              # 位姿缓存最大帧数（driver 125Hz → ~2s）
     process_period: 0.1              # 处理周期（秒）：对齐→变换→滤波→入图；0.1s = 10Hz
     allow_stale_pose: false          # 位姿对齐失败时：true=降级用最近位姿继续处理；false=丢弃本帧（防错位数据）
-    map_publish_period: 2.0          # 累积地图发布周期（秒）：0.5Hz 全量发布 /preprocessed_cloud（planning 仅在 pre_scan_done 取一次）
+    map_publish_period: 2.0          # 地图快照发布周期（秒）：仅 rolling/accumulate 生效（planning 仅在 pre_scan_done 取一次）
 
     # ── 地图参数 ──
-    map_max_points: 500000           # 地图点数上限（超过自动体素降采样；0 = 不限）
+    map_max_points: 500000           # 地图点数上限（仅 rolling 生效；超过自动体素降采样；0 = 不限）
 
-    # ── 离线点云加载（联调）──
-    input_pcd: "/tmp/test_cloud.pcd"   # 启动即加载的 PCD 路径（空 = 不加载）
-    pcd_dir: ""                        # load_cloud 按索引加载的 PCD 目录（空 = 仅 input_pcd_）
+    # ── 离线点云加载（base_link 系场景，非相机帧；联调用）──
+    input_pcd: ""                    # 启动即加载的 PCD（空 = 不加载）；例："/tmp/test_cloud.pcd"
+    pcd_dir: ""                      # load_cloud 按索引加载的 PCD 目录（空 = 仅 input_pcd_）
 
     # ── 滤波参数 ──
+    # ★ 效果对齐阶段（贴合 realsense-viewer 直出画面）：三段观感滤波全部关闭 ——  见
+    #   enable_*_filter。此时链路只做 nan_remove（无效深度剔除，无观感副作用）。
+    #   排查顺序建议：① 三关全关看基线 → ② 开 enable_voxel_filter（只变稀、几乎不改观感，
+    #   但直接决定 /sensor 带宽）→ ③ 开 SDK 侧 spatial/temporal（观感与 viewer 一致）
+    #   → ④ 最后才考虑 passthrough（须按真实作业空间重设 ROI）。
+    enable_passthrough_filter: false # 直通滤波开关（base_link 系 z 轴 ROI 裁剪）
+    enable_voxel_filter: false       # 体素降采样开关
     voxel_leaf_size: 0.005           # 体素滤波器叶子大小（米）——真机大场景建议 ≥0.004，过小会导致点量巨大、处理变慢
+                                     #   0 / 负数 = 未配置（跳过）；不要用 0 当"关闭"手段，请用上面的开关
     passthrough_field: "z"           # 直通滤波字段，可选 "x" / "y" / "z"
-    passthrough_limit_min: -0.5      # 直通滤波最小值
-    passthrough_limit_max: 0.5       # 直通滤波最大值
+    passthrough_limit_min: -0.5      # 直通滤波最小值（base_link 系 z；当前值是"地面 ±0.5m"的房间设定，
+    passthrough_limit_max: 0.5       #   不是相机 FOV ——按真实作业空间重设，否则会静默裁掉桌面/工件高度）
     passthrough_negative: false      # 是否取反（提取范围外的点）
     enable_statistical_filter: false # 统计滤波开关（KDTree 50 近邻开销大，高频处理建议关闭；真机静止场景可开启）
     statistical_mean_k: 50           # 统计滤波邻域点数
