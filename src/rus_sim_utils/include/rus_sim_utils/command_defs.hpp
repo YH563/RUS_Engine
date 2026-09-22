@@ -85,10 +85,11 @@ namespace RusUtils {
         inline constexpr std::string_view kError       = "error";
     }
 
-    // ── 感知帧类型（SensorFrame::type；通道保留，具体内容待设计） ──
+    // ── 感知帧类型（SensorFrame::type；与 rus_sim_interfaces/msg/SensorFrame.msg 的 TYPE_* 对应） ──
     namespace SensorType {
         inline constexpr std::string_view kPointCloud = "pointcloud";
         inline constexpr std::string_view kImage      = "image";
+        inline constexpr std::string_view kUltrasound = "ultrasound";  // 预留：超声（尚未实现）
         inline constexpr std::string_view kCompressed = "compressed";
     }
 

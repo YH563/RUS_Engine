@@ -6,6 +6,19 @@
 
 namespace rus_sim_bridge {
 
+    namespace {
+        /// SensorFrame.msg 的 uint8 类型码 → 线格式字符串（唯一定义处 command_defs.hpp::SensorType）
+        std::string sensor_type_name(uint8_t type) {
+            using Msg = rus_sim_interfaces::msg::SensorFrame;
+            switch (type) {
+                case Msg::TYPE_IMAGE:      return std::string(RusUtils::SensorType::kImage);
+                case Msg::TYPE_ULTRASOUND: return std::string(RusUtils::SensorType::kUltrasound);
+                case Msg::TYPE_POINTCLOUD:
+                default:                   return std::string(RusUtils::SensorType::kPointCloud);
+            }
+        }
+    }  // namespace
+
     // ================================================================
     //  工厂创建
     // ================================================================
@@ -50,7 +63,24 @@ namespace rus_sim_bridge {
             state_topic, 10,
             std::bind(&BridgeNode::on_state, this, std::placeholders::_1));
 
+        // ── 订阅感知流 → 广播到 /sensor 二进制通道 ──
+        const std::string sensor_topic =
+            declare_parameter<std::string>("sensor_topic", "/sensor/pointcloud");
+        forward_sensor_ = declare_parameter<bool>("forward_sensor", true);
+        if (forward_sensor_) {
+            // QoS 必须兼容 perception 发布端（reliable + transient_local，map_qos）：
+            // durability 不匹配时 DDS 不会建立通路（收不到任何帧）。
+            // depth=1：只要最新一帧（覆盖式，与 /sensor 通道语义一致）。
+            rclcpp::QoS sensor_qos(1);
+            sensor_qos.transient_local();
+            sensor_sub_ = create_subscription<SensorFrame>(
+                sensor_topic, sensor_qos,
+                std::bind(&BridgeNode::on_sensor, this, std::placeholders::_1));
+        }
+
         RCLCPP_INFO(get_logger(), "BridgeNode 已启动 ws://0.0.0.0:%d (control/state/sensor)", ws_port);
+        RCLCPP_INFO(get_logger(), "感知流：%s <- %s", forward_sensor_ ? "转发" : "关闭",
+                    sensor_topic.c_str());
     }
 
     // ================================================================
@@ -131,6 +161,40 @@ namespace rus_sim_bridge {
         s.frame_rate = state_rate_;
 
         ws_.BroadcastState(RusUtils::SerializeState(s));
+    }
+
+    // ================================================================
+    //  感知流（perception → bridge → 前端 /sensor 二进制通道）
+    // ================================================================
+
+    void BridgeNode::on_sensor(const SensorFrame::SharedPtr msg) {
+        // ROS 消息 → 线格式结构（字段一一对应，bridge 不做任何改写；编码走唯一的
+        // RusUtils::EncodeSensorFrame，避免线格式出现第二份实现）
+        RusUtils::SensorFrame f;
+        f.type = sensor_type_name(msg->type);
+        f.timestamp = rclcpp::Time(msg->stamp).seconds();
+        f.seq = msg->seq;
+        f.frame_id = msg->frame_id;
+        f.encoding = msg->encoding;
+        f.scope = msg->scope;
+
+        f.points = msg->points;
+        f.fields = msg->fields;          // 分量顺序（如 x,y,z,rgb）
+        f.dtype = msg->dtype;            // 量化后类型（如 int16）
+        f.range_min = msg->range_min;    // 前端反量化必需，逐帧变化
+        f.range_max = msg->range_max;
+
+        f.width = msg->width;
+        f.height = msg->height;
+        f.image_encoding = msg->image_encoding;
+        f.step = msg->step;
+
+        f.payload = msg->data;           // 已压缩（encoding 声明算法），原样透传
+
+        // 一帧 = 一条 WS 二进制消息（覆盖式：慢客户端丢帧，不积压）
+        RCLCPP_DEBUG(get_logger(), "感知帧 seq=%u type=%s scope=%s points=%u payload=%zuB → /sensor",
+                     msg->seq, f.type.c_str(), f.scope.c_str(), msg->points, f.payload.size());
+        ws_.BroadcastSensor(RusUtils::EncodeSensorFrame(f));
     }
 
 }  // namespace rus_sim_bridge

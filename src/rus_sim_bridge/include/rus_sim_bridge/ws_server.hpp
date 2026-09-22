@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -21,7 +22,7 @@ namespace rus_sim_bridge {
      * 通道划分：
      *   /control  —— command / reply / event（可靠，id 关联回执）
      *   /state    —— state 高频流（可丢帧，覆盖式推送最新值）
-     *   /sensor   —— 图像 / 点云（预留）
+     *   /sensor   —— 感知二进制帧（可丢帧，覆盖式推送最新一帧）
      *
      * 线程模型：
      *   - 网络事件循环运行在独立线程
@@ -64,6 +65,20 @@ namespace rus_sim_bridge {
         /// 向所有 /control 连接推送事件（逐会话入队，可靠）
         void BroadcastEvent(const std::string& json);
 
+        /**
+         * @brief 向所有 /sensor 连接推送最新感知帧（覆盖式，可丢帧）
+         *
+         * @param frame 完整一帧的线格式字节（`uint32 LE 头长 + JSON 头 + payload`，
+         *              见 RusUtils::EncodeSensorFrame）
+         *
+         * 语义与 /state 一致：**只保留最新一帧**，慢客户端丢帧而不是积压；
+         * 一帧 = 一条 WS 二进制消息（前端按「一条消息 = 一帧」做完整性自检）。
+         * 帧可到兆级，内部按需动态分配并走 LWS_WRITE_BINARY（旧的定长 16 KiB 缓冲
+         * 会静默截断，勿在此通道复用 /state 的写法）。
+         * 新连接的客户端会立即拿到缓存的最新一帧（无需等下一次发布）。
+         */
+        void BroadcastSensor(std::vector<uint8_t> frame);
+
         // libwebsockets 协议回调（公开给 C 回调）
         static int ws_callback(lws* wsi, lws_callback_reasons reason,
                                void* user, void* in, size_t len);
@@ -73,6 +88,8 @@ namespace rus_sim_bridge {
         struct SessionInfo {
             uint64_t id = 0;
             RusUtils::Channel channel = RusUtils::Channel::Control;
+            uint64_t state_sent_gen = 0;   // 本会话已推送的状态代次（0 = 尚未推送）
+            uint64_t sensor_sent_gen = 0;  // 本会话已发送的感知帧代次（0 = 尚未发过）
         };
 
         void enqueue_session(uint64_t session_id, const std::string& json);
@@ -89,6 +106,14 @@ namespace rus_sim_bridge {
         // 状态流（覆盖式）
         std::mutex state_mutex_;
         std::string last_state_json_;
+        uint64_t state_gen_ = 0;  // 每次 BroadcastState +1，会话按代次幂等推送
+
+        // 感知流（覆盖式单槽）：shared_ptr 换出旧帧，读侧只做引用计数，
+        // 避免兆级字节在锁内二次拷贝。gen 每收到一帧 +1，会话按代次判定是否需发送
+        // （否则 50ms 一轮的 flush 会把同一帧反复重发）。
+        std::mutex sensor_mutex_;
+        std::shared_ptr<const std::vector<uint8_t>> last_sensor_frame_;
+        uint64_t sensor_gen_ = 0;
 
         // 会话登记（wsi → 信息 / id → wsi / id → 待推送）
         mutable std::mutex registry_mutex_;

@@ -6,6 +6,10 @@ bridge_node:
     ws_port: 8765
     # 状态流数据源 topic
     state_topic: "/driver/state"
+    # 感知流数据源 topic（rus_sim_interfaces/msg/SensorFrame，压缩点云）
+    sensor_topic: "/sensor/pointcloud"
+    # 是否转发感知流到 WS /sensor 二进制通道（false = 不订阅，通道无数据）
+    forward_sensor: true
     # 下游服务调用超时（毫秒），超时回复 failure
     timeout_ms: 5000
     # 指令队列出队周期（毫秒）

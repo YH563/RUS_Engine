@@ -178,7 +178,7 @@ float64[] result
 | `/camera/camera/depth/color/points` | `sensor_msgs/msg/PointCloud2` | realsense2_camera → perception | 受相机驱动 | 输入点云（**仅 `source=ros_topic` 时使用**；`source=realsense` 直连不经过此话题） |
 | `/preprocessed_cloud` | `PointCloud2` | perception → planning | `rolling` / `accumulate`：默认 0.5 Hz 地图快照全量（`map_publish_period: 2.0`）；`none`：处理周期 10 Hz 当前帧。QoS `transient_local` | 地图快照或当前帧（base_link），**planning 规划输入** |
 | `/perception/frame` | `PointCloud2` | perception → RViz | 处理周期 10 Hz，QoS `transient_local` | 当前帧（实时可视化） |
-| `/sensor/pointcloud` | `rus_sim_interfaces/msg/SensorFrame` | perception → recorder（bridge 转发前端待接） | 与 `/preprocessed_cloud` 同频，QoS `transient_local` | 压缩帧（zstd + int16 量化 + `range_min/max` + `scope`，为前端 `/sensor` 通道预留） |
+| `/sensor/pointcloud` | `rus_sim_interfaces/msg/SensorFrame` | perception → bridge、recorder | 与 `/preprocessed_cloud` 同频，QoS `transient_local` | 压缩帧（zstd + int16 量化 + `range_min/max` + `scope`）；bridge 转发为 WS `/sensor` 二进制帧 |
 | `/module_events` | `rus_sim_interfaces/msg/ModuleEvent` | planning → bridge | 事件触发 | 子模块事件上报 |
 | `/planned_trajectory` | `geometry_msgs/msg/PoseArray` | planning → RViz | 每次 `plan` 一次 | 规划轨迹调试可视化 |
 
@@ -186,7 +186,10 @@ float64[] result
 > `realsense`（librealsense2 直连，默认）/ `ros_topic`（订阅 `/camera/...`）/ `replay`（离线 PCD 循环回放，无设备联调）/ `auto`（有设备走直连，否则回落 `ros_topic`）。
 > ⚠️ 直连与 `realsense2_camera` **互斥**：同一台相机不能被两个进程同时打开（`Device or resource busy`）。
 
-> ⚠️ bridge **当前只订阅** `/driver/state` 与 `/module_events`（`bridge_node.cpp`），并未订阅 `/sensor/pointcloud`，因此 WS 的 `/sensor` 通道目前没有数据源。
+> bridge 订阅三个话题（`bridge_node.cpp`）：`/driver/state`（→ `/state`）、`/module_events`
+> （→ `/control` 的 event）、`/sensor/pointcloud`（→ `/sensor` 二进制帧；话题由 `sensor_topic`
+> 参数指定，`forward_sensor: false` 可关闭）。感知订阅的 QoS 必须与发布端匹配
+> （reliable + `transient_local`），否则 DDS 不建通路（一帧都收不到）。
 
 > 📼 `rus_sim_recorder` 是当前 `/sensor/pointcloud` 的**唯一订阅者**（录制落盘用，见 §9.7 / `docs/Protocol/RecFormat.md`）。
 
@@ -217,7 +220,7 @@ string    module            # "driver" / "planning" / "perception"
 builtin_interfaces/Time stamp
 ```
 
-**`SensorFrame.msg`**（感知 → 前端 `/sensor`，预留）
+**`SensorFrame.msg`**（感知 → bridge / recorder）
 
 ```text
 uint8  TYPE_POINTCLOUD = 0
@@ -255,7 +258,7 @@ uint8[] data          # 压缩后 payload
 |------|------|------|--------|
 | `/control` | `WsPath::kControl` | `command` / `reply` / `event` | 可靠（按 session id 入队推送） |
 | `/state` | `WsPath::kState` | `state` 高频流 | 覆盖式（只保留最新一帧） |
-| `/sensor` | `WsPath::kSensor` | 二进制感知帧 | 可丢帧（当前无数据源） |
+| `/sensor` | `WsPath::kSensor` | 二进制感知帧 | 覆盖式（只推最新一帧，慢客户端丢帧） |
 
 端口参数 `ws_port`（默认 8765）；**端口被占用会自动尝试 +1 / +2**（`ws_server.cpp` 最多 3 次）。
 
@@ -293,7 +296,16 @@ uint8[] data          # 压缩后 payload
 ### 5.5 sensor
 
 线格式：`uint32 LE 头长度` + `JSON 头` + 二进制 payload，编解码实现于 `rus_sim_utils/protocol.hpp`
-（`EncodeSensorFrame` / `DecodeSensorFrame`）。**当前 bridge 未订阅任何感知话题 → 该通道空转。**
+（`EncodeSensorFrame` / `DecodeSensorFrame`）。bridge 订阅 `/sensor/pointcloud`（`sensor_topic`）
+后调 `EncodeSensorFrame` → `WsServer::BroadcastSensor`，**一帧 = 一条 WS 二进制消息**，
+覆盖式（只留最新一帧，慢客户端丢帧）。帧可到兆级，故该通道必须**动态分配缓冲**并走
+`LWS_WRITE_BINARY`（照抄 `/state` 的定长 16 KiB 写法会静默截断）。
+
+> ⚠️ **覆盖式通道的推送必须按「代次」幂等**：lws 对同一次 `lws_callback_on_writable()`
+> 请求会**重复回调** `LWS_CALLBACK_SERVER_WRITEABLE`（实测一个 service 周期内可回调数百次）。
+> 若回调里无条件 `lws_write`，同一份数据会被重发数百次——`/state` 通道曾因此被放大到
+> **1.7 万条/s**（实测：发布 10 Hz 却推 59685 条/3.5s）。现由 `state_gen_` / `sensor_gen_`
+> 与 `SessionInfo::{state,sensor}_sent_gen` 保证同一版本每会话只推一次。
 
 ---
 
@@ -405,6 +417,8 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 |------|------|--------|--------|------|
 | `ws_port` | int | 8765 | 8765 | WS 监听端口，占用则 +1/+2 |
 | `state_topic` | string | `/driver/state` | `/driver/state` | 状态流数据源 |
+| `sensor_topic` | string | `/sensor/pointcloud` | `/sensor/pointcloud` | 感知流数据源（`SensorFrame`，→ `/sensor`） |
+| `forward_sensor` | bool | true | true | 是否转发感知流（false = 不订阅，通道无数据） |
 | `timeout_ms` | int | 5000 | 5000 | 下游服务调用超时 |
 | `drain_ms` | int | 10 | 10 | 指令队列出队周期 |
 
@@ -650,7 +664,13 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 1. **预扫查流程归属（阻塞性）**：`pre_scan_start` / `pre_scan_end` / `pre_scan_done` / `query_prescan_done` 归 planning 还是 perception？
    当前状态是「谁也走不通」，`plan` 永远返回失败。需先定契约，再同步改代码与文档。
 2. **工具坐标系指令链路**：是否把 5 条工具指令补进 `command_types.hpp`（driver 侧已全实现，只差这一环）。
-3. **`/sensor` 通道**：是否让 bridge 订阅 `/sensor/pointcloud`，在 `/sensor` 通道按二进制帧下发。
+3. ✅ **`/sensor` 通道**（已落地）：bridge 订阅 `/sensor/pointcloud` → `/sensor` 通道按二进制帧下发
+   （覆盖式，参数 `sensor_topic` / `forward_sensor`）。**阶段性决策：暂不处理 `scope=map`**——
+   前端只按单帧语义实现（整帧替换），收到快照时走同一条路径兜底（不 merge、不崩），
+   不做快照抽帧 / 降采样 / 增量渲染。注意默认 `mapping_mode: rolling` 下发的仍是快照；
+   若要真·单帧 + 10 Hz 须切 `mapping_mode: none`，代价是 `planning` 输入一起退化为单视角
+   （同一 `publish_cloud()` 出口，见 `perception_params.yaml::mapping_mode` 注释）。
+   剩余待定：前端是否默认连该通道。
 4. **`map_clear` / `load_cloud`**：是否注册到 bridge（换场景 / 离线回放联调需要）。
 5. **坐标语义**：`set_start_pose` / `set_end_pose` 注释为「法兰系」，而 driver 的 `movel` / `servo_cart` 目标为 **TCP**；planning 送入插值器的状态取 `tool_pose`（TCP）。规范里必须明确一条链上的坐标系约定。
 6. **文档结构定稿**：`docs/DevelopmentGuide.md`（规范 + 契约总入口）→ `docs/Protocol/WsProtocol.md`（前端协议细则）→ `docs/<pkg>/<pkg>.md`（按 `DocExample.md` 模板生成 7 个包文档）。

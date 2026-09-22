@@ -108,6 +108,7 @@ namespace rus_sim_bridge {
         {
             std::lock_guard lock(state_mutex_);
             last_state_json_ = json;  // 覆盖式，只保留最新
+            ++state_gen_;
         }
         if (context_) lws_cancel_service(context_.get());  // 唤醒事件循环
     }
@@ -124,6 +125,17 @@ namespace rus_sim_bridge {
         if (context_) lws_cancel_service(context_.get());
     }
 
+    void WsServer::BroadcastSensor(std::vector<uint8_t> frame) {
+        if (!running_.load() || frame.empty()) return;
+        {
+            std::lock_guard lock(sensor_mutex_);
+            // 覆盖式单槽：换出旧帧（读侧只做引用计数，不拷贝兆级字节）
+            last_sensor_frame_ = std::make_shared<const std::vector<uint8_t>>(std::move(frame));
+            ++sensor_gen_;
+        }
+        if (context_) lws_cancel_service(context_.get());  // 唤醒事件循环
+    }
+
     // ================================================================
     //  内部
     // ================================================================
@@ -137,10 +149,19 @@ namespace rus_sim_bridge {
     }
 
     void WsServer::flush_scheduled() {
+        // 状态是「覆盖式」通道：每次唤醒都必须带上代次，只推没有推过的版本
         std::string state_json;
+        uint64_t state_gen = 0;
         {
             std::lock_guard lock(state_mutex_);
             state_json = last_state_json_;
+            state_gen = state_gen_;
+        }
+
+        uint64_t sensor_gen = 0;
+        {
+            std::lock_guard lock(sensor_mutex_);
+            sensor_gen = sensor_gen_;
         }
 
         std::vector<lws*> to_wake;
@@ -148,7 +169,11 @@ namespace rus_sim_bridge {
             std::lock_guard lock(registry_mutex_);
             for (auto& [wsi, info] : sessions_) {
                 if (info.channel == Channel::State) {
-                    if (!state_json.empty()) to_wake.push_back(wsi);
+                    if (!state_json.empty() && info.state_sent_gen != state_gen)
+                        to_wake.push_back(wsi);
+                } else if (info.channel == Channel::Sensor) {
+                    if (sensor_gen != 0 && info.sensor_sent_gen != sensor_gen)
+                        to_wake.push_back(wsi);
                 } else {
                     auto it = pending_replies_.find(info.id);
                     if (it != pending_replies_.end() && !it->second.empty())
@@ -244,6 +269,8 @@ namespace rus_sim_bridge {
 
         case LWS_CALLBACK_SERVER_WRITEABLE: {
             uint64_t session_id = 0;
+            uint64_t sent_state_gen = 0;
+            uint64_t sent_sensor_gen = 0;
             Channel ch = Channel::Control;
             {
                 std::lock_guard lock(server->registry_mutex_);
@@ -251,24 +278,69 @@ namespace rus_sim_bridge {
                 if (it != server->sessions_.end()) {
                     session_id = it->second.id;
                     ch = it->second.channel;
+                    sent_state_gen = it->second.state_sent_gen;
+                    sent_sensor_gen = it->second.sensor_sent_gen;
                 }
             }
 
+            // ⚠️ lws 对同一次 lws_callback_on_writable() 请求会**重复回调**本回调
+            // （实测一个 service 周期内可回调数百次），因此下面每个通道都必须按
+            // 「代次」做幂等：本会话已推过的版本立刻 return，绝不重发。
             if (ch == Channel::State) {
                 std::string json;
+                uint64_t gen = 0;
                 {
                     std::lock_guard lock(server->state_mutex_);
                     json = server->last_state_json_;
+                    gen = server->state_gen_;
                 }
-                if (!json.empty()) {
-                    unsigned char buf[LWS_PRE + 16384];
-                    int n = json.copy(reinterpret_cast<char*>(buf) + LWS_PRE, 16384);
-                    if (n > 0) lws_write(wsi, buf + LWS_PRE, static_cast<size_t>(n), LWS_WRITE_TEXT);
-                }
+                if (json.empty() || gen == 0 || sent_state_gen == gen) return 0;
+
+                // 对端/内核发送缓冲已满：丢本帧（可丢帧通道），下一轮 flush 再推最新值
+                if (lws_send_pipe_choked(wsi)) return 0;
+
+                std::vector<unsigned char> buf(LWS_PRE + json.size());
+                std::memcpy(buf.data() + LWS_PRE, json.data(), json.size());
+                if (lws_write(wsi, buf.data() + LWS_PRE, json.size(), LWS_WRITE_TEXT) < 0)
+                    return -1;
+
+                std::lock_guard lock(server->registry_mutex_);
+                auto it = server->sessions_.find(wsi);
+                if (it != server->sessions_.end()) it->second.state_sent_gen = gen;
                 return 0;
             }
 
-            // control / sensor：取本会话待推送队列
+            if (ch == Channel::Sensor) {
+                // 一帧 = 一条 WS 二进制消息（覆盖式：只发最新一帧）
+                std::shared_ptr<const std::vector<uint8_t>> frame;
+                uint64_t gen = 0;
+                {
+                    std::lock_guard lock(server->sensor_mutex_);
+                    frame = server->last_sensor_frame_;
+                    gen = server->sensor_gen_;
+                }
+                if (!frame || frame->empty() || gen == 0 || sent_sensor_gen == gen) return 0;
+
+                // 对端/内核发送缓冲已满：本帧直接丢（可丢帧通道），管道空了下一轮 flush 会重发最新帧
+                if (lws_send_pipe_choked(wsi)) return 0;
+
+                // 帧可到兆级：必须动态分配；整帧一次 lws_write，OS 未接受的部分
+                // lws 会自动缓冲续发（见 libwebsockets/lws-write.h「Truncated Writes」），
+                // 因此「一次 lws_write = 一条 WS 消息」，前端可据此做完整性自检。
+                std::vector<unsigned char> buf(LWS_PRE + frame->size());
+                std::memcpy(buf.data() + LWS_PRE, frame->data(), frame->size());
+                int n = lws_write(wsi, buf.data() + LWS_PRE,
+                                  frame->size(), LWS_WRITE_BINARY);
+                if (n < 0) return -1;
+
+                // 记录已发送的代次（丢帧由代次跳跃体现，不重发旧帧）
+                std::lock_guard lock(server->registry_mutex_);
+                auto it = server->sessions_.find(wsi);
+                if (it != server->sessions_.end()) it->second.sensor_sent_gen = gen;
+                return 0;
+            }
+
+            // control：取本会话待推送队列
             std::vector<std::string> queue;
             {
                 std::lock_guard lock(server->registry_mutex_);

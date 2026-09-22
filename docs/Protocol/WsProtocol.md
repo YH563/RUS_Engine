@@ -23,7 +23,7 @@
 |----------|----------|--------|------|
 | `/control` | `command` / `reply` / `event` | 可靠（id 关联回执） | 指令收发、事件通知 |
 | `/state` | `state`（关节状态高频流） | 可丢帧（只发最新值） | 状态可视化 |
-| `/sensor` | 感知二进制帧（预留） | 可丢帧 | 点云 / 图像 |
+| `/sensor` | 感知二进制帧（点云已接通） | 可丢帧（只发最新一帧） | 点云 / 图像 |
 
 前端至少连 `/control`。`/state`、`/sensor` 按需连接；**未连接的通道不会收到数据**。
 
@@ -128,9 +128,11 @@
 | `tool_pose` | double[] | 当前 TCP 位姿（基坐标系下，长度 6，m/rad） |
 
 - 覆盖式推送：bridge 只保留**最新一帧**，慢客户端丢帧，前端须容忍帧不连续。
+- **推送节奏**：每收到一次 `/driver/state` 发布即推一条（1:1，同一版本不会重复推送）；
+  新连接会立刻收到最近一条。
 - 数组长度固定为 6（关节 1~6）。
 
-### 3.3 感知流：sensor（/sensor 通道，预留）
+### 3.3 感知流：sensor（/sensor 通道，点云已接通）
 
 感知数据（点云 / 图像）为二进制帧，独立于 JSON 通路。
 
@@ -159,7 +161,7 @@ JSON 头示例：
 
 | 头字段 | 类型 | 适用 | 说明 |
 |--------|------|------|------|
-| `type` | string | 全部 | `pointcloud` / `image` / `compressed`（预留） |
+| `type` | string | 全部 | `pointcloud` / `image` / `ultrasound`（预留）/ `compressed`（预留） |
 | `timestamp` | double | 全部 | 采集时间戳（秒，ROS 时基） |
 | `seq` | uint32 | 全部 | 帧序号（前端检测丢帧；每类型独立递增） |
 | `frame_id` | string | 全部 | 数据坐标系；点云为 `base_link`（已算好变换，前端不再做坐标变换） |
@@ -177,12 +179,166 @@ JSON 头示例：
 >   `SensorFrame.msg` 同名同义，不要混用。
 > - **点云 payload 解压后布局**（每点 10 字节，`count = points`）：
 >   `int16 x | int16 y | int16 z | uint32 rgb`，小端；坐标须按上面的公式反量化。
-> - **生产者现状**：`rus_sim_perception` 已按本格式发布 ROS 话题 `/sensor/pointcloud`
->   （`SensorFrame.msg`，与 `/preprocessed_cloud` 同频）；**bridge 尚未订阅转发 → /sensor
->   通道仍空转**，前端可暂不实现。
-> - **`scope` 的必要性**：同一话题在 `mapping_mode=none` 下是当前帧、在 `rolling` /
->   `accumulate` 下是地图快照（点数远大于单帧），前端按 `scope` 决定是"整体替换"还是
->   "更新累积视图"。
+> - **链路现状（已接通）**：`rus_sim_perception` 按本格式发布 ROS 话题 `/sensor/pointcloud`
+>   （`SensorFrame.msg`，与 `/preprocessed_cloud` 同频，QoS `transient_local`）；
+>   `rus_sim_bridge` 已订阅该话题（`bridge_params.yaml::sensor_topic`，
+>   `forward_sensor: false` 可关闭）并转成上述线格式广播到 `/sensor` 通道，
+>   **一帧 = 一条 WS 二进制消息**（`LWS_WRITE_BINARY`）。
+> - **完整性自检**：`4 + headLen + payloadLen == 消息长度`。兆级帧会被 TCP/WS 分片，
+>   客户端库会拼回**一条消息**，但**绝不能**按「收到一次数据 = 一帧」处理。
+> - **首帧延迟**：连接成功后 bridge 立即推送缓存的最新一帧，无需等下一次发布。
+> - **丢帧语义**：覆盖式——bridge 只留最新一帧，慢客户端丢帧而非积压；`seq` 跳跃即丢帧。
+>   ⚠️ `map_clear` 会把 `seq` 复位为 0，丢帧统计须容忍序号回退（别用 `seq` 单调递增做断言）。
+> - **码率提示**：`scope=frame`（`mapping_mode=none`）10 Hz 单帧，`scope=map`
+>   （`rolling` / `accumulate`，默认）是**全量地图快照**、0.5 Hz，单帧可达数 MB。
+> - **`scope` 的语义**：同一话题在 `mapping_mode=none` 下是当前帧、在 `rolling` /
+>   `accumulate` 下是地图快照（点数远大于单帧）。两者**都是自包含的完整点集**——`map`
+>   是 `MapManager::Snapshot()` 的整图拷贝，逐帧重新量化 + 独立 zstd 压缩，**协议里没有
+>   delta / 差分字段**，所以前端**一律整帧替换**，不存在「增量拼接」这种写法。
+> - **`scope` 的唯一用途**：决定这帧归属哪个视图（当前帧 / 累积地图）以及点数预期
+>   （是否需要降采样渲染）。**当前阶段前端只按 `scope=frame` 实现**：收到 `scope=map`
+>   时走同一条「整帧替换」路径兜底即可（不崩、不 merge），不做快照抽帧 / 降采样调度。
+>   ⚠️ 注意 `mapping_mode=none` 会让 `/preprocessed_cloud`（planning 输入）**一起**退化为
+>   单视角——`perception` 的 `publish_cloud()` 是 raw + 压缩帧的**同一出口**，没有独立开关，
+>   故「前端只想看单帧」与「planning 要累积地图」在当前实现下互斥（要两者兼得须改代码，
+>   不是改配置）。
+
+#### 前端解码参考（C#）
+
+> 依赖：`System.Text.Json`（.NET 内置）+ `ZstdSharp.Port`（.NET 没有内置 zstd：
+> `dotnet add package ZstdSharp.Port`）。
+
+**① 接收：一条 WS 消息 = 一帧**
+
+```csharp
+using System.Net.WebSockets;
+
+using var ws = new ClientWebSocket();
+await ws.ConnectAsync(new Uri("ws://127.0.0.1:8765/sensor"), ct);
+
+var chunk = new byte[64 * 1024];        // 分片缓冲：大小不影响帧长，只影响分片次数
+using var acc = new MemoryStream();     // 复用，避免每帧新建
+
+while (ws.State == WebSocketState.Open)
+{
+    acc.SetLength(0);
+    WebSocketReceiveResult r;
+    do                                  // ← 必须循环到 EndOfMessage：兆级帧一定会分片
+    {
+        r = await ws.ReceiveAsync(new ArraySegment<byte>(chunk), ct);
+        if (r.MessageType == WebSocketMessageType.Close)
+        {
+            await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, null, ct);
+            return;
+        }
+        acc.Write(chunk, 0, r.Count);
+    } while (!r.EndOfMessage);
+
+    byte[] frame = acc.ToArray();       // 到这里才是「一条完整帧」
+    // 解析放后台线程（见 ②），UI 线程只消费最新一帧
+    var cloud = SensorFrameDecoder.Decode(frame);
+    if (cloud is not null) Dispatcher.UIThread.Post(() => Renderer.Update(cloud));
+}
+```
+
+**② 解码：`uint32 LE 头长 + JSON 头 + payload`**
+
+```csharp
+using System.Buffers.Binary;
+using System.Text;
+using System.Text.Json;
+using ZstdSharp;
+
+public sealed record PointCloud(float[] Xyz, uint[] Rgb, int Count, string Scope, uint Seq);
+
+public static class SensorFrameDecoder
+{
+    public static PointCloud? Decode(byte[] msg)
+    {
+        // ① 头长度（小端 uint32）
+        if (msg.Length < 4) return null;
+        int headLen = (int)BinaryPrimitives.ReadUInt32LittleEndian(msg);
+        if (headLen <= 0 || 4 + headLen > msg.Length) return null;   // 帧不自洽 → 整帧丢弃
+
+        // ② JSON 头（UTF-8）
+        using var doc = JsonDocument.Parse(Encoding.UTF8.GetString(msg, 4, headLen));
+        var h = doc.RootElement;
+        if (h.GetProperty("type").GetString() != "pointcloud") return null;   // 按 type 分流
+
+        uint   points = h.GetProperty("points").GetUInt32();
+        uint   seq    = h.GetProperty("seq").GetUInt32();
+        string enc    = h.GetProperty("encoding").GetString()!;  // "zstd" / "raw"，不要假设
+        string scope  = h.GetProperty("scope").GetString() ?? "";
+        double[] mn   = ReadArr(h, "range_min");                 // 逐帧变化，禁止缓存
+        double[] mx   = ReadArr(h, "range_max");
+
+        // ③ payload（必须复制出来：msg 缓冲会被下一帧覆盖）
+        int payloadLen = msg.Length - 4 - headLen;
+        if (payloadLen <= 0) return null;
+        byte[] payload = msg.AsSpan(4 + headLen, payloadLen).ToArray();
+
+        // ④ 解压（按 encoding 分支，不要写死 zstd）
+        byte[] raw = enc switch
+        {
+            "zstd" => new Decompressor().Unwrap(payload),
+            "raw"  => payload,
+            _      => throw new NotSupportedException($"unknown encoding={enc}")
+        };
+
+        // ⑤ 自检：解压后必须正好 points × 10 字节（每点 int16 x/y/z + uint32 rgb）
+        if (raw.Length != points * 10)
+            throw new InvalidDataException($"raw={raw.Length} != points*10={points * 10}");
+
+        // ⑥ 反量化 + 取色
+        var xyz = new float[points * 3];
+        var rgb = new uint[points];
+        for (int i = 0; i < points; i++)
+        {
+            var p = raw.AsSpan(i * 10, 10);
+            short qx = BinaryPrimitives.ReadInt16LittleEndian(p);
+            short qy = BinaryPrimitives.ReadInt16LittleEndian(p[2..]);
+            short qz = BinaryPrimitives.ReadInt16LittleEndian(p[4..]);
+            rgb[i]   = BinaryPrimitives.ReadUInt32LittleEndian(p[6..]);   // 0x00RRGGBB
+
+            xyz[i * 3]     = Dequant(qx, mn[0], mx[0]);
+            xyz[i * 3 + 1] = Dequant(qy, mn[1], mx[1]);
+            xyz[i * 3 + 2] = Dequant(qz, mn[2], mx[2]);
+        }
+        return new PointCloud(xyz, rgb, (int)points, scope, seq);
+    }
+
+    // 与后端 SensorEncoder::quantize 严格互逆
+    private static float Dequant(short q, double min, double max) =>
+        (float)(min + (q + 32768.0) * (max - min) / 65535.0);
+
+    private static double[] ReadArr(JsonElement h, string key)
+    {
+        var a = h.GetProperty(key);
+        var v = new double[a.GetArrayLength()];
+        int i = 0;
+        foreach (var e in a.EnumerateArray()) v[i++] = e.GetDouble();
+        return v;
+    }
+}
+```
+
+**踩坑清单**
+
+1. **必须循环收到 `EndOfMessage`**：2~4 MB 的帧必然被分片，`ClientWebSocket` 不会替你拼消息；
+   按「收到一次数据 = 一帧」写必然解析失败。
+2. **全小端**：统一用 `BinaryPrimitives.Read*LittleEndian`（x64/ARM 都明确）；不要用
+   `BitConverter` 再假定本机端序。
+3. **`encoding` 要分支**：点云当前固定 `zstd`，但 `raw` 也合法（是协议字段，不是实现细节）。
+4. **`range_min/max` 逐帧变化**：只能用本帧头里的值，禁止缓存复用。`max > min` 恒成立
+   （后端对退化包围盒补了 1 mm，不会除零）。
+5. **精度**：JSON 头里的浮点按 `%.6f` 输出（≤5e-7 m 误差），量化步长 ≈ `(max-min)/65535`，
+   故反量化总误差 ≤ 步长/2 + 5e-7 m（典型 1.5e-5 m）。
+6. **颜色**：`rgb` 是 `0x00RRGGBB` 打包整数，取色
+   `Color.FromRgb((byte)(c >> 16), (byte)(c >> 8), (byte)c)`；不要按 PCL 的 float 位模式解释。
+7. **UI 线程别解压**：30 万点解压 + 反量化请放后台线程，渲染侧只保留最新一帧（覆盖式）；
+   bridge 不会等慢客户端，帧会被丢而不是积压。
+8. **`seq` 会回退**：`map_clear` 后 `seq` 复位为 0，丢帧统计/序号断言必须容忍回退。
+9. **`scope` 决定渲染策略**：`frame` 是当前帧（整体替换）、`map` 是累积地图快照（点数大得多）。
 
 ---
 
@@ -343,16 +499,18 @@ JSON 头示例：
 
 ## 7. 前端实现要点（Avalonia）
 
-1. **三个连接**：`/control`（必连）、`/state`（状态可视化）、`/sensor`（预留）。
+1. **三个连接**：`/control`（必连）、`/state`（状态可视化）、`/sensor`（点云已接通）。
 2. **两个解析器**：
    - JSON 解析器：读 `type` 字段分流 → `reply` / `event`（同构，可复用字段绑定）/
      `state`；
-   - 二进制解析器（sensor 预留）。
+   - 二进制解析器：`uint32 LE 头长 + JSON 头 + payload`（§3.3 附 C# 参考实现）。
 3. **reply 与 event 同构**：建议建模为一个类（`type` / `id` / `ack_id` / `event` /
    `success` / `message` / `result`），reply 时 `event` 字段为空，event 时 `id` 为 0。
 4. **请求追踪**：`id` 自增；reply 按 `id` 匹配；event 按 `ack_id` 挂回原请求。
 5. **丢帧容忍**：`/state` 只保留最新值，不要依赖连续性。
 6. **数值精度**：result 内所有 double 为 6 位小数字符串，解析成 double 即可。
+7. **感知帧别在 UI 线程解压**：单帧解压后 2~4 MB（30 万点），放后台线程解析成点数组，
+   渲染侧只取「最新一帧」（覆盖式），避免帧积压导致画面延迟。
 7. **模式管理**：应用层维护当前模式（自动/手动）；切换用 `set_mode [0/1]`，
    收到 reply 后再更新 UI 上的模式状态。
 
