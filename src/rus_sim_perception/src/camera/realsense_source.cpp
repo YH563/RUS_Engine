@@ -246,18 +246,35 @@ namespace {
         Impl& s = *impl_;
         const RealSenseConfig& cfg = s.cfg;
 
+        // ⚠️ librealsense 的 wait_for_frames(timeout) 超时时**抛 rs2::error**
+        //    （what() = "Frame didn't arrive within N"），并不返回空 frameset。
+        //    故"超时"必须与"真·设备掉线"区分：pipe.start() 之后首帧要等深度/彩色
+        //    两流建立 + align 同步（实测 0.2~1s），若一次超时就退出采集线程，会
+        //    表现为「相机已连接、节点已启动，但 0Hz、地图恒空、前端/RViz 无数据」。
+        constexpr int kFrameTimeoutMs         = 200;  // 一帧周期 66ms@15fps，余量充足
+        constexpr int kMaxConsecutiveTimeouts = 50;   // 200ms×50 = 10s 无帧 → 判定掉线
+        int consecutive_timeouts = 0;                 // 采集线程私有，无需原子
+
         while (s.running.load()) {
             rs2::frameset frames;
             try {
-                frames = s.pipe.wait_for_frames(200);  // 超时返回空集（不抛）
+                frames = s.pipe.wait_for_frames(kFrameTimeoutMs);
             } catch (const rs2::error& e) {
                 if (!s.running.load()) break;          // Stop() 引发的管道关闭
-                ++s.dropped;
-                s.warn(std::string("RealSense 取帧异常（设备掉线？），采集线程退出: ") + e.what());
-                break;
+                // 超时（含首帧未就绪）不退出：计数后继续等，只有持续无帧才判掉线
+                if (++consecutive_timeouts >= kMaxConsecutiveTimeouts) {
+                    ++s.dropped;
+                    s.warn("RealSense 连续取帧超时（约 "
+                           + std::to_string(kMaxConsecutiveTimeouts * kFrameTimeoutMs / 1000)
+                           + "s 无帧），判定设备掉线，采集线程退出: " + e.what());
+                    break;
+                }
+                continue;
             }
             if (!s.running.load()) break;
-            if (!frames) continue;                     // 超时：暂无新帧
+            if (!frames) continue;                     // 防御：极少数版本返回空帧集
+
+            consecutive_timeouts = 0;                  // 有帧 → 超时计数清零
 
             // 帧集 → 点云：对齐 → 可选滤波 → 内参反投影 + 量程过滤 → 颜色
             auto build = [&](rs2::frameset& fs, CloudRGB& out) -> bool {
