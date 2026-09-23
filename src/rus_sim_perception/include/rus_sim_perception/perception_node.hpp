@@ -14,6 +14,9 @@
 //                       /preprocessed_cloud   地图快照（rolling/accumulate）或当前帧（none）
 //                       /perception/frame     当前帧（RViz 实时可视化）
 //                       /sensor/pointcloud    压缩帧（SensorFrame → 前端 /sensor 通路）
+//                          scope 由 sensor_scope 参数决定：
+//                            map    与 /preprocessed_cloud 同源 —— 地图快照 / 当前帧
+//                            frame  恒发当前单帧（前端流畅可视化；planning 仍走地图）
 //
 //  对外指令（/perception/command）：仅 map_clear（清空地图，换场景用）
 //
@@ -66,6 +69,8 @@ namespace RusPerception {
         CloudRGBPtr load_cloud_from_file(const std::string& path);   // 加载 PCD → 直发一次，失败返回 nullptr
         std::string pcd_path_by_index(int idx) const;                // pcd_dir_ 下第 N 个 .pcd（字典序）
         bool publish_cloud(const CloudRGBPtr& cloud, double stamp);  // 地图快照/当前帧发布：raw + 压缩帧
+        // 压缩帧发布（/sensor/pointcloud 前端通路；scope 由调用方指定 map / frame）
+        bool publish_sensor_frame(const CloudRGBPtr& cloud, double stamp, const std::string& scope);
         bool mapping_enabled() const { return mapping_mode_ != "none"; }
 
         // ── 指令服务回调（/perception/command）──
@@ -82,6 +87,7 @@ namespace RusPerception {
         std::string sensor_cloud_topic_;      // /sensor/pointcloud
         std::string driver_state_topic_;
         std::string mapping_mode_;            // none（不建图）/ rolling（上限降采样）/ accumulate（只累积）
+        std::string sensor_scope_;            // map（与 planning 同源）/ frame（前端恒发当前单帧）
         Camera::SourceConfig source_cfg_;     // 数据源配置（rs_* / replay_* 参数）
         double max_allowed_diff_sec_ = 0.05;  // 点云与位姿最大允许时间差（s）
         double process_period_ = 0.1;         // 处理周期（s）：对齐→变换→滤波→入图

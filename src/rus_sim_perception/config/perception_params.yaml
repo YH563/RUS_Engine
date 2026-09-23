@@ -26,17 +26,27 @@ perception_node:
                               #          —— 与旧 /camera/camera/depth/color/points 同系，原标定直接沿用
                               #   none ：最快，点云属 camera_depth_optical_frame，且无法取 RGB（自动降级白点）
     rs_color_mode: "rgb"      # rgb（需 rs_align_to=color）| white（白点，可省掉彩色流）
-    rs_point_stride: 1        # 像素抽稀步长：1=全分辨率(640×480≈30.7万点，与 viewer 一致)，2=≈7.7万点；点数 ≈ 1/stride²
-                              #   效果对齐阶段用 1；若 /sensor 通路的 WS 带宽吃紧，先调这里（观感代价比关体素小）
+    rs_point_stride: 1        # 像素抽稀步长：1=全分辨率(640×480≈30.7万点，与 viewer 一致)，2=≈5.6万点(÷4)
+                              #   ★ 实测处理帧率（本机 640×480@15）：stride=1 → 3.8Hz（单帧后处理 ~185ms）；
+                              #     stride=2 → 9.5Hz（~65ms）。单帧后处理耗时正比于点数，
+                              #     故这是最有效的提速手段（观感代价比关体素小）。
+                              #   观感优先用 1（与 viewer 点密度逐像素可比）；想要 ~10Hz 流畅前端就改 2
+                              #   （WS 带宽同时从 1.6MB/帧 降到 0.45MB）。注意：提高 rs_fps 没用 ——
+                              #   采集 15fps 时处理都只能跟上 3.8~9.5Hz，提高帧率只会增加帧槽覆盖丢弃。
     rs_min_depth: 0.15        # 有效深度下限（米）：更近视为无效并剔除（不会产生 (0,0,0) 鬼点）
                               #   D435 有效最近距≈0.105m，再近本无数据，故该下限不产生可见裁剪
     rs_max_depth: 6.0         # 有效深度上限（米）：超出视为无效。旧值 2.0 会裁掉工作范围外的场景，
                               #   与 viewer 画面差异明显；D435 可靠量程 ~3m，6m 之外点噪声大，不建议再放宽
     rs_decimation: false      # SDK 抽稀滤波（降分辨率采样；与 rs_point_stride 作用重叠，一般只用其一）
-    rs_spatial_filter: false  # 空间滤波（平整表面降噪，细节略模糊）
+    rs_spatial_filter: true   # 空间滤波（SDK 深度平滑，抑制边缘/远距飞点）
+                              #   ★ 实测收益：累积地图的"噪声沉淀"速率 199 → 139 点/帧（-30%），
+                              #   且不增加处理耗时（零开销）。它平滑深度值、不删像素，
+                              #   故单帧点数不变 —— 别用点数判断它是否生效。
                               #   注：要"贴合 realsense-viewer"，应优先开 SDK 侧这三项滤波（viewer 的
                               #   Post-Processing 面板同一套算法），而不是 PCL 侧的 voxel/statistical
     rs_temporal_filter: false # 时间滤波（静止场景降噪；运动时会有拖影）
+                              #   ⚠️ 本场景相机随机械臂运动：temporal 靠多帧加权平均，运动时必然
+                              #   产生拖影，收益有限而副作用明显，故保持关闭
 
     # ── 离线回放参数（source=replay）──
     # PCD 内容视为【相机光学系】点云，需位姿 + 标定矩阵（与 input_pcd 的 base_link 语义不同）
@@ -56,6 +66,19 @@ perception_node:
     # 另注：rolling 触发点数上限时地图仍会按 voxel_leaf_size 降采样，与 enable_voxel_filter 无关。
     mapping_mode: "rolling"
 
+    # ── 前端通路语义：/sensor/pointcloud 到底发什么 ──
+    # map   与 /preprocessed_cloud 同源（rolling/accumulate → 地图快照；none → 当前帧）
+    # frame 恒发当前单帧 —— 前端看到的等价于 realsense-viewer 画面：单视角、无多帧累积
+    #       重影、无深度噪声在体素里的永久沉淀；而 /preprocessed_cloud（planning 输入）
+    #       仍按 mapping_mode 走地图，两者互不影响（这是把"前端"与"planning"解耦的开关）。
+    # ★ 为什么默认 frame（实测定量）：
+    #   rolling 地图是"纯追加 + 无淘汰"（map_manager 仅在超点数上限或发布前才做 5mm 体素
+    #   降采样），相机静止时深度噪声也会每帧新增约 200 个落入新体素的点，且永不消失 ——
+    #   实测沉淀速率 199 点/帧 ≈ 1194 点/秒，几分钟后地图被噪声填满，视觉上就是
+    #   "一大堆散乱点"；而单帧模式下点数恒定（实测 22.6 万，连续 52 帧零增长）。
+    #   需要在前端看"建图累积效果"时，再临时改成 "map"。
+    sensor_scope: "frame"
+
     # ── 时间对齐 / 调度参数 ──
     # 点云用采集时刻（RealSense 直连 = node->now()；话题源 = header.stamp），
     # 位姿用 RobotState.timestamp，处理时按点云采集时刻对位姿队列插值。
@@ -72,12 +95,13 @@ perception_node:
     input_pcd: ""                    # 启动即加载的 PCD（空 = 不加载）；例："/tmp/test_cloud.pcd"
     pcd_dir: ""                      # load_cloud 按索引加载的 PCD 目录（空 = 仅 input_pcd_）
 
-    # ── 滤波参数 ──
-    # ★ 效果对齐阶段（贴合 realsense-viewer 直出画面）：三段观感滤波全部关闭 ——  见
-    #   enable_*_filter。此时链路只做 nan_remove（无效深度剔除，无观感副作用）。
-    #   排查顺序建议：① 三关全关看基线 → ② 开 enable_voxel_filter（只变稀、几乎不改观感，
-    #   但直接决定 /sensor 带宽）→ ③ 开 SDK 侧 spatial/temporal（观感与 viewer 一致）
-    #   → ④ 最后才考虑 passthrough（须按真实作业空间重设 ROI）。
+    # ── 滤波参数（PCL 侧；SDK 侧见上面的 rs_*_filter）──
+    # ★ 当前策略：SDK 侧 rs_spatial_filter 已开（降噪主力，零开销）；PCL 侧三段仍全关 ——
+    #   此时链路只做 nan_remove（无效深度剔除，无观感副作用）。PCL 侧每开一段都会叠加
+    #   CPU 开销，且都不是"贴近 viewer"的必需项：
+    #   ① enable_voxel_filter（只变稀、几乎不改观感，但直接决定 /sensor 带宽）
+    #   ② enable_statistical_filter（KDTree 50 近邻，高频处理开销大，仅静止场景值得开）
+    #   ③ enable_passthrough_filter（须按真实作业空间重设 ROI，当前默认值会静默裁掉工件）
     enable_passthrough_filter: false # 直通滤波开关（base_link 系 z 轴 ROI 裁剪）
     enable_voxel_filter: false       # 体素降采样开关
     voxel_leaf_size: 0.005           # 体素滤波器叶子大小（米）——真机大场景建议 ≥0.004，过小会导致点量巨大、处理变慢

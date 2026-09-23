@@ -57,10 +57,13 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'record_dir', default_value='records',
             description='录制输出目录（相对路径按启动工作目录解析）'),
-        # 联调测试点云开关（透传给感知层）：默认加载 ~/.rus_sim/test_data/test_cloud.pcd
+        # 联调测试点云开关（透传给感知层）：默认【不加载】。
+        # 该点云是 rus_sim_gen_test_cloud 生成的合成起伏面（0.5×0.6m、12221 点），
+        # 会作为地图种子永久留在地图里、并混进前端 /sensor 通路，造成"散乱点"观感。
+        # 仅在需要"启动即有数据"的联调场景下用 load_test_cloud:=true 显式打开。
         DeclareLaunchArgument(
-            'load_test_cloud', default_value='true',
-            description='感知层是否在启动时加载联调测试点云；false = 全栈不灌测试点云'),
+            'load_test_cloud', default_value='false',
+            description='感知层是否在启动时加载联调测试点云；true = 灌入合成测试面（仅联调）'),
         DeclareLaunchArgument(
             'input_pcd', default_value=DEFAULT_INPUT_PCD,
             description='联调测试点云路径（base_link 系），受 load_test_cloud 开关控制'),

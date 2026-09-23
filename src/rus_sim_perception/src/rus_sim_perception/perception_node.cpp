@@ -45,6 +45,11 @@ namespace {
         // ── 数据源参数（source 决定用哪一路采集；实现在 src/camera/）──
         source_type_  = declare_parameter<std::string>("source", "auto");
         mapping_mode_ = declare_parameter<std::string>("mapping_mode", "rolling");
+        // 前端 /sensor 通路语义（与 planning 解耦的关键）：
+        //   map   与 /preprocessed_cloud 同源（rolling/accumulate → 地图快照；none → 当前帧）
+        //   frame 恒发当前单帧 —— 前端拿到的等价于 realsense-viewer 画面（单视角、无累积
+        //         重影、无噪声沉淀），而 /preprocessed_cloud 仍按 mapping_mode 供 planning
+        sensor_scope_ = declare_parameter<std::string>("sensor_scope", "map");
         // 空值 = auto（launch 传空占位时用探测：有设备走直连，否则回落话题）
         if (source_type_.empty()) source_type_ = "auto";
         source_cfg_.type  = source_type_;
@@ -71,6 +76,11 @@ namespace {
             RCLCPP_WARN(get_logger(), "未知 mapping_mode=%s（可选 none/rolling/accumulate），按 rolling 处理",
                         mapping_mode_.c_str());
             mapping_mode_ = "rolling";
+        }
+        if (sensor_scope_ != "map" && sensor_scope_ != "frame") {
+            RCLCPP_WARN(get_logger(), "未知 sensor_scope=%s（可选 map/frame），按 map 处理",
+                        sensor_scope_.c_str());
+            sensor_scope_ = "map";
         }
 
         // ── 滤波参数（perception_params.yaml 注入）──
@@ -177,10 +187,12 @@ namespace {
         }
 
         RCLCPP_INFO(get_logger(),
-            "PerceptionNode 已启动：数据源=%s 状态=%s 实时帧=%s 地图=%s 建图=%s 处理周期=%.0fms 地图发布周期=%.1fs",
+            "PerceptionNode 已启动：数据源=%s 状态=%s 实时帧=%s 地图=%s 建图=%s 前端=%s "
+            "处理周期=%.0fms 地图发布周期=%.1fs",
             source_ ? source_->Describe().c_str() : "无",
             driver_state_topic_.c_str(), frame_topic_.c_str(), output_cloud_topic_.c_str(),
-            mapping_mode_.c_str(), process_period_ * 1000.0, map_publish_period_);
+            mapping_mode_.c_str(), sensor_scope_.c_str(),
+            process_period_ * 1000.0, map_publish_period_);
 
         // 启动即加载离线点云（input_pcd 参数，联调用）
         if (!input_pcd_.empty()) {
@@ -251,8 +263,15 @@ namespace {
             if (!aligned) {
                 // 对齐失败且未降级：丢弃本帧（帧槽取走即消费，不会反复重试同一帧）
                 if (pose_interp_.Size() >= 2) {
+                    // ⚠️ 措辞说明：Sample 返回 false 有两种原因 ——
+                    //   ① 差值确实超容差（nearest_diff > max_allowed_diff_sec）
+                    //   ② 点云时刻晚于最新位姿、位姿缓存尚未覆盖该时刻
+                    //      （此时差值可能远小于容差，如 0.0024s；125Hz 位姿 vs 15fps 点云
+                    //      存在这种时序竞态：处理该帧时对应位姿还在路上）
+                    //   两者都按"丢帧"处理（保守，防错位数据）；要容忍 ② 可开 allow_stale_pose。
                     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-                        "点云与位姿时间差过大（%.4fs > %.4fs），丢弃本帧（源=%s seq=%u）",
+                        "位姿对齐失败（差值 %.4fs，容差 %.4fs；或位姿尚未覆盖该时刻），"
+                        "丢弃本帧（源=%s seq=%u）",
                         nearest_diff, max_allowed_diff_sec_, source_type_.c_str(), frame.seq);
                 }
                 last_processed_stamp_ = t;
@@ -275,6 +294,12 @@ namespace {
                             // 单帧模式（mapping_mode=none）：无累积地图，当前帧即对外数据，
                             // 直接全量发布 /preprocessed_cloud（planning / 前端每帧整体替换）
                             publish_cloud(base_cloud, t);
+                        } else if (sensor_scope_ == "frame") {
+                            // 前端要单帧、planning 要地图：/preprocessed_cloud 仍按
+                            // map_publish_period 发地图快照（地图节流发布见下方），
+                            // /sensor/pointcloud 改发当前帧（scope=frame，无累积重影/噪声沉淀）
+                            publish_sensor_frame(base_cloud, t,
+                                                 std::string(RusUtils::SensorScope::kFrame));
                         }
                         // 实时帧发布（高频，RViz 订阅 /perception/frame 查看流畅画面）
                         publish_frame(base_cloud, t);
@@ -358,27 +383,45 @@ namespace {
         cloud_pub_->publish(*cloud_msg);
 
         // 2) 压缩帧发布（前端 /sensor 通路）
-        EncodedFrame encoded;
-        if (encoder_.EncodePointCloud(*cloud, encoded)) {
-            SensorFrame frame;
-            frame.type = SensorFrame::TYPE_POINTCLOUD;
-            frame.encoding = encoded.encoding;
-            frame.stamp = ToRosTime(stamp);
-            frame.seq = sensor_seq_++;
-            frame.frame_id = "base_link";
-            // 同一话题两种语义：rolling/accumulate 发的是地图快照，none 发的是当前单视角帧
-            frame.scope = mapping_enabled() ? std::string(RusUtils::SensorScope::kMap)
-                                            : std::string(RusUtils::SensorScope::kFrame);
-            frame.points = encoded.points;
-            frame.fields = encoded.fields;
-            frame.dtype = encoded.dtype;
-            frame.range_min = {encoded.range_min[0], encoded.range_min[1], encoded.range_min[2]};
-            frame.range_max = {encoded.range_max[0], encoded.range_max[1], encoded.range_max[2]};
-            frame.data = std::move(encoded.payload);
-            sensor_pub_->publish(frame);
-            RCLCPP_DEBUG(get_logger(), "点云已发布：%zu 点, sensor=%.1f KB",
-                         cloud->size(), frame.data.size() / 1024.0);
+        //    同一话题两种语义：rolling/accumulate 发的是地图快照，none 发的是当前单视角帧。
+        //    ⚠️ rolling/accumulate + sensor_scope=frame 时【不发】：前端通路已由 process_frame
+        //    的单帧路径负责；若此处再发地图快照，/sensor 上会混进 map/frame 两种 scope，
+        //    前端表现为周期性收到一个点数/范围突变的大帧。
+        const bool emit_sensor_frame = !mapping_enabled() || (sensor_scope_ != "frame");
+        if (emit_sensor_frame) {
+            publish_sensor_frame(cloud, stamp,
+                                 mapping_enabled() ? std::string(RusUtils::SensorScope::kMap)
+                                                   : std::string(RusUtils::SensorScope::kFrame));
         }
+        return true;
+    }
+
+    /// 压缩帧发布（/sensor/pointcloud → 前端 /sensor 通路）
+    /// scope 由调用方指定：kMap = 地图快照（与 planning 同源），kFrame = 当前单帧（前端可视化）
+    bool PerceptionNode::publish_sensor_frame(const CloudRGBPtr& cloud, double stamp,
+                                              const std::string& scope)
+    {
+        if (!cloud || cloud->empty()) return false;
+
+        EncodedFrame encoded;
+        if (!encoder_.EncodePointCloud(*cloud, encoded)) return false;
+
+        SensorFrame frame;
+        frame.type = SensorFrame::TYPE_POINTCLOUD;
+        frame.encoding = encoded.encoding;
+        frame.stamp = ToRosTime(stamp);
+        frame.seq = sensor_seq_++;
+        frame.frame_id = "base_link";
+        frame.scope = scope;
+        frame.points = encoded.points;
+        frame.fields = encoded.fields;
+        frame.dtype = encoded.dtype;
+        frame.range_min = {encoded.range_min[0], encoded.range_min[1], encoded.range_min[2]};
+        frame.range_max = {encoded.range_max[0], encoded.range_max[1], encoded.range_max[2]};
+        frame.data = std::move(encoded.payload);
+        sensor_pub_->publish(frame);
+        RCLCPP_DEBUG(get_logger(), "压缩帧已发布：%zu 点, scope=%s, %.1f KB",
+                     cloud->size(), scope.c_str(), frame.data.size() / 1024.0);
         return true;
     }
 

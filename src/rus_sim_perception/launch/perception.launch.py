@@ -51,9 +51,10 @@ def generate_launch_description():
         # 关闭方式用 load_test_cloud:=false —— 注意 `input_pcd:=""` 在 ros2 launch 下是
         # malformed argument（引号被 shell 剥掉后变成 `input_pcd:=`），不可用。
         DeclareLaunchArgument(
-            "load_test_cloud", default_value="true",
+            "load_test_cloud", default_value="false",
             description="启动时是否加载联调测试点云（路径见 input_pcd）；"
-                        "false = 不加载，此时只有 source 指定的数据源供数"),
+                        "true = 灌入合成测试面（会混进地图，仅联调用），"
+                        "false（默认）= 不加载，此时只有 source 指定的数据源供数"),
         DeclareLaunchArgument(
             "input_pcd", default_value=DEFAULT_INPUT_PCD,
             description="联调测试点云路径（base_link 系，不走坐标变换），受 load_test_cloud 开关控制。"
