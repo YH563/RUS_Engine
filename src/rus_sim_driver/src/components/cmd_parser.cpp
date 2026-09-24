@@ -17,7 +17,7 @@ namespace RusRobotDriver {
             cmd.type = MOTION_TYPE_JOINT;
             if (!args.empty())
                 cmd.target = Eigen::Map<const VectorXd>(args.data(), std::min<size_t>(args.size(), 6));
-            if (args.size() > 6) cmd.speed = args[6];
+            if (args.size() > 6) cmd.speed = args[6];        // 比例 [0~1]，缺省 0.5；<0.01 由驱动钳到 0.01
             if (args.size() > 7) cmd.acceleration = args[7];
             return cmd;
         }
@@ -27,7 +27,7 @@ namespace RusRobotDriver {
             cmd.type = MOTION_TYPE_CART;
             if (!args.empty())
                 cmd.target = Eigen::Map<const VectorXd>(args.data(), std::min<size_t>(args.size(), 6));
-            if (args.size() > 6) cmd.speed = args[6];
+            if (args.size() > 6) cmd.speed = args[6];        // 比例 [0~1]，缺省 0.5（≥6 时 args[0..5] 为 x,y,z,rx,ry,rz）
             if (args.size() > 7) cmd.acceleration = args[7];
             return cmd;
         }
@@ -50,7 +50,8 @@ namespace RusRobotDriver {
 
         if (name == kStartJog) {
             MotionCommand cmd;
-            // ref → type: 0→JOG_0, 2→JOG_1, 4→JOG_2, 8→工件坐标系（暂映射到 JOG_1）
+            // ref → type: 0→JOG_0(关节点动)、2→JOG_1(基坐标系点动)、4→JOG_2(工具坐标系点动)
+            // 其他值（含 8=工件坐标系，暂未实现）→ 回退 JOG_0
             uint8_t ref = args.size() > 0 ? static_cast<uint8_t>(args[0]) : 0;
             switch (ref) {
                 case 0:  cmd.type = MOTION_TYPE_JOG_0; break;
@@ -63,6 +64,10 @@ namespace RusRobotDriver {
             if (args.size() > 3) cmd.speed       = std::clamp(args[3] / 100.0, 0.0, 1.0);  // 百分比 → 比例
             if (args.size() > 4) cmd.acceleration = std::clamp(args[4] / 100.0, 0.0, 1.0);
             if (args.size() > 5) cmd.jog_max_dis = args[5];
+            // jog_max_dis（第 6 个参数）仅作协议兼容解析，**不参与运动控制**：
+            // 上限单位 rad（关节点动 / 笛卡尔旋转轴 4~6）/ m（笛卡尔平移轴 1~3），
+            // 实际生效值由 driver_node 按 driver_params.yaml 的 jog_max_dis_joint/trans/rot 覆盖；
+            // 真实驱动再把该值换算为 SDK 的 °/mm（换算只在驱动实现内部）。
             return cmd;
         }
 
@@ -91,6 +96,7 @@ namespace RusRobotDriver {
         if (name == kRobotEnable)    return RobotEnableCmd{args.empty() ? uint8_t{1} : static_cast<uint8_t>(args[0])};
         if (name == kGetState)       return GetStateCmd{args.empty() ? uint8_t{1} : static_cast<uint8_t>(args[0])};
         if (name == kIsMotionDone)   return IsMotionDoneCmd{};
+        if (name == kGetDriverType)  return GetDriverTypeCmd{};
         // 扇出指令 query_motion_done：bridge 同时发给 planning + driver，等价 is_motion_done
         if (name == kQueryMotionDone) return IsMotionDoneCmd{};
 

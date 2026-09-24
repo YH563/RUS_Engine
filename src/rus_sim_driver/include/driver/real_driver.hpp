@@ -75,6 +75,9 @@ namespace RusRealRobotDriver {
         int ServoCart(MotionCommand& cart_command) override;
 
         // 点动
+        // jog_command.jog_max_dis：值来自 driver_params.yaml（由 driver_node::jog_limit_for 注入），
+        // 指令层单位 rad（关节/笛卡尔旋转轴）、m（笛卡尔平移轴），0 = 不限制；
+        // 内部按 SDK 语义换算为 °（关节/旋转轴）/ mm（平移轴）。
         int StartJOG(MotionCommand& jog_command) override;
 
         // 减速停止点动

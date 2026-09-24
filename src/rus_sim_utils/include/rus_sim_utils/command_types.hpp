@@ -225,6 +225,11 @@ namespace RusUtils {
             }
         };
 
+        /// 查询当前驱动类型（result: [0=仿真, 1=真实]，与 SwitchDriver::params[0] 同编码）
+        struct GetDriverType {
+            static constexpr std::string_view kName = CmdName::kGetDriverType;
+        };
+
         struct SetTimeSpeed {
             static constexpr std::string_view kName = CmdName::kSetTimeSpeed;
             std::vector<double> speed;                    // [speed]
@@ -265,7 +270,7 @@ namespace RusUtils {
             MoveJ, MoveL, ServoJ, ServoCart, StartJog,
             StopJogDecel, StopJogImmediate, ServoStart, ServoEnd,
             Disconnect, IsConnected, IsInDragTeach, RobotEnable,
-            GetState, IsMotionDone, RunFile, SwitchDriver,
+            GetState, IsMotionDone, RunFile, SwitchDriver, GetDriverType,
             SetTimeSpeed, GetTimeSpeed, GetSimTime, StepOnce, GetFrameRate>;
 
         // ────────────────────────────────────────────────────────────

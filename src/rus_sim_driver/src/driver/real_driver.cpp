@@ -14,6 +14,11 @@ namespace RusRealRobotDriver {
         constexpr double kRad2Deg = 180.0 / M_PI;   // 弧度 → 度
         constexpr double kMm2M    = 1.0 / 1000.0;   // 毫米 → 米
         constexpr double kM2Mm    = 1000.0;         // 米 → 毫米
+        // 点动位移上限「不限制」的近似值：SDK 的 max_dis 必须 > 0（传 0 → 机械臂不动）；
+        // 单位随点动类型解释：关节/笛卡尔旋转轴 = °，笛卡尔平移轴 = mm。
+        // 实际点动会在到达该上限前被 stop_jog_decel / stop_jog_immediate 终止。
+        // 用于 driver_params.yaml 中 jog_max_dis_* = 0（不限制）的情形。
+        constexpr float  kJogMaxDisUnlimited = 3600.0f;
 
         // RPC/SDK 错误码 → 可读描述（用于连接失败诊断）
         const char* rpc_error_str(int err)
@@ -365,16 +370,22 @@ namespace RusRealRobotDriver {
         uint8_t ref = static_cast<uint8_t>((jog_command.type - RusRobotDriver::MOTION_TYPE_JOG_0) * 2);
         last_jog_ref_ = ref;  // 记录本次点动参考系，供 StopJOGDecel 使用
 
-        // ⚠️ 平台语义「jog_max_dis=0 表示无限制」与 SDK 的 max_dis（单次点动最大位移[°或mm]）冲突：
-        // 官方示例 TestJOG 一律传 30.0；若传 0，控制器会视为「单次位移上限 = 0」→ 机械臂不动。
-        // 此处对 <=0 兜底为官方示例默认值，保证点动可动（运动过程由 ImmStopJOG/StopJOG 或 max_dis 上限停止）。
-        float max_dis = static_cast<float>(jog_command.jog_max_dis);
-        if (max_dis <= 0.0f) {
-            max_dis = 30.0f;
+        // ── max_dis 单位换算：驱动配置 m/rad → SDK °/mm（单位口径统一收束在驱动内部）──
+        // 值来源：driver_params.yaml 的 jog_max_dis_joint / jog_max_dis_trans / jog_max_dis_rot
+        //        （由 driver_node::jog_limit_for 注入；前端 start_jog 传入的 max_dis 不参与控制）。
+        // 配置单位：rad（关节点动 JOG_0 与笛卡尔旋转轴 nb=4~6）、m（笛卡尔平移轴 nb=1~3），0 = 不限制；
+        // SDK 单位：°（关节/旋转）、mm（平移），且必须 > 0（传 0 会被视为「位移上限 0」→ 机械臂不动）。
+        const bool rot_like = (jog_command.type == RusRobotDriver::MOTION_TYPE_JOG_0) ||
+                              (jog_command.jog_axis > 3);
+        float max_dis;
+        if (jog_command.jog_max_dis > 0.0) {
+            max_dis = static_cast<float>(jog_command.jog_max_dis * (rot_like ? kRad2Deg : kM2Mm));
+        } else {
+            // 平台语义 0 = 不限制：SDK 无「不限制」表示，用足够大的上限近似
+            max_dis = kJogMaxDisUnlimited;
             fprintf(stderr,
-                "[RobotRealDriver] 警告: jog_max_dis=%.1f 在 SDK 中被解释为位移上限 0（机械臂不动），"
-                "已兜底为 %.1f°（请前端传有效 max_dis）\n",
-                static_cast<float>(jog_command.jog_max_dis), max_dis);
+                "[RobotRealDriver] 提示: 点动上限配置为 %.3f（0 = 不限制），已按 SDK 上限 %.0f%s 下发\n",
+                jog_command.jog_max_dis, max_dis, rot_like ? "°" : "mm");
         }
 
         float vel = static_cast<float>(jog_command.speed * 100.0);
@@ -383,8 +394,9 @@ namespace RusRealRobotDriver {
         int rtn = robot.StartJOG(ref, jog_command.jog_axis, jog_command.jog_dir, vel, acc, max_dis);
         if (rtn != 0) {
             fprintf(stderr,
-                "[RobotRealDriver] StartJOG(ref=%u, nb=%u, dir=%u, vel=%.1f, acc=%.1f, max_dis=%.1f) 失败 错误码=%d\n",
-                ref, jog_command.jog_axis, jog_command.jog_dir, vel, acc, max_dis, rtn);
+                "[RobotRealDriver] StartJOG(ref=%u, nb=%u, dir=%u, vel=%.1f, acc=%.1f, max_dis=%.1f(%s)) 失败 错误码=%d\n",
+                ref, jog_command.jog_axis, jog_command.jog_dir, vel, acc, max_dis,
+                rot_like ? "°" : "mm", rtn);
         }
         return rtn;
     }

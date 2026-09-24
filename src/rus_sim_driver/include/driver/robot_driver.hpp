@@ -62,6 +62,11 @@ namespace RusRobotDriver {
         virtual int ServoCart(MotionCommand& joint_command) = 0;
 
         // 点动
+        // jog_command.jog_max_dis：单次位移上限，值由 driver_node 按 driver_params.yaml 注入
+        // （jog_max_dis_joint / jog_max_dis_trans / jog_max_dis_rot），指令层单位
+        // rad（关节/笛卡尔旋转轴）、m（笛卡尔平移轴），0 = 不限制；
+        // 前端 start_jog 传入的 max_dis 仅解析、不参与控制。
+        // 单位换算一律在驱动实现内部完成（真实驱动 → SDK 的 °/mm）。
         virtual int StartJOG(MotionCommand& jog_command) = 0;
 
         // 减速停止点动

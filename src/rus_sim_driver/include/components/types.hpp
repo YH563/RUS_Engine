@@ -33,7 +33,10 @@ namespace RusRobotDriver {
         // ---- 点动参数（仅 MOTION_TYPE_JOG_* 时使用） ----
         uint8_t jog_axis = 1;     // 轴号（nb）：1~6
         uint8_t jog_dir = 1;      // 方向（dir）：0-负方向，1-正方向
-        double jog_max_dis = 0.0; // 单次最大位移（max_dis），单位 ° 或 mm，0 表示无限制
+        // 单次最大位移（max_dis）：指令层单位 rad（关节/笛卡尔旋转轴）/ m（笛卡尔平移轴）。
+        // ⚠️ 仅作协议兼容保留（前端可不传），不参与运动控制：实际生效的上限由驱动节点
+        //    按 driver_params.yaml 的 jog_max_dis_joint / jog_max_dis_trans / jog_max_dis_rot 覆盖后下发。
+        double jog_max_dis = 0.0;
     };
 
     //  非运动指令参数
@@ -46,6 +49,7 @@ namespace RusRobotDriver {
     struct RobotEnableCmd   { uint8_t state = 1; };
     struct GetStateCmd      { uint8_t flag = 1; };
     struct IsMotionDoneCmd  {};
+    struct GetDriverTypeCmd {};   // 查询当前驱动类型（0=仿真, 1=真实）
 
     // ── 伺服模式 ──
     struct ServoStartCmd    {};
@@ -90,7 +94,7 @@ namespace RusRobotDriver {
         ConnectCmd,        DisconnectCmd,
         IsConnectedCmd,    IsInDragTeachCmd,
         RobotEnableCmd,    GetStateCmd,
-        IsMotionDoneCmd,
+        IsMotionDoneCmd,   GetDriverTypeCmd,
 
         // 伺服模式
         ServoStartCmd,     ServoEndCmd,
@@ -128,7 +132,7 @@ namespace RusRobotDriver {
      *   movel    [x,y,z,rx,ry,rz, speed?, acc?]
      *   servoj   [q1..q6]
      *   servo_cart [x,y,z,rx,ry,rz]
-     *   start_jog [ref, nb, dir, vel, acc, max_dis]
+     *   start_jog [ref, nb, dir, vel, acc, max_dis?]
      *   reset     [mode, enable]
      */
     RobotCommand ParseCommand(std::string_view name, const std::vector<double>& args);

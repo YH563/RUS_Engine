@@ -60,6 +60,8 @@ namespace RusUtils {
         inline constexpr std::string_view kIsMotionDone     = "is_motion_done";
         inline constexpr std::string_view kRunFile          = "run_file";
         inline constexpr std::string_view kSwitchDriver     = "switch_driver";
+        // 查询当前驱动类型：0=仿真（sim），1=真实（real），与 switch_driver 的 type 参数同编码
+        inline constexpr std::string_view kGetDriverType    = "get_driver_type";
         inline constexpr std::string_view kSetTimeSpeed     = "set_time_speed";
         inline constexpr std::string_view kGetTimeSpeed     = "get_time_speed";
         inline constexpr std::string_view kGetSimTime       = "get_sim_time";

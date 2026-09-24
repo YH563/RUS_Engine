@@ -12,6 +12,11 @@
 > 4. **数据精度**：所有 double 数值 JSON 输出保留 **6 位小数**。
 > 5. **模式切换**：`set_mode` 在**手动（直控 driver）/ 自动（planning 协调）**之间切换，
 >    影响 `pause` / `resume` / `reset` / `query_motion_done` / `stop` 的路由（见 §4.1 / §4.6）。
+> 6. **单位统一**：运动指令参数在协议层统一使用 **位置 m + 角度 rad**（速度参数为比例 / 百分比），
+>    单位换算（m↔mm、rad↔deg）**只在驱动内部发生**，前端不做任何换算；完整量纲见 §4 参数量纲表。
+> 7. **点动上限后端化**：`start_jog` 的单次位移上限改由后端配置（`driver_params.yaml` 的
+>    `jog_max_dis_joint` / `jog_max_dis_trans` / `jog_max_dis_rot`）决定；第 6 个参数 `max_dis`
+>    仍可传但不生效（协议兼容保留），前端**不必再传**。
 
 ---
 
@@ -54,6 +59,9 @@
 - 未知指令 → reply `success=false, message="unknown command: <cmd>"`。
 - 无参指令若携带非空 args → 同样判定为 invalid args。
 - JSON 无法解析（缺 `cmd` 等）→ reply `success=false, message="malformed command"`，`id=0`。
+- **运动类指令的单位约定**（`movej` / `movel` / `servo_*` / `start_jog`）见 §4 开头的量纲说明：
+  位置 m、角度 rad；`movej`/`movel` 的 `speed`/`acc` 为**比例 0~1**，`start_jog` 的 `speed%`/`acc%` 为**百分比 0~100**。
+  如上例 `movej` 的 `args` = `[q1..q6(rad), speed(比例)]`，即 `0.5` 表示 50% 速度。
 
 ---
 
@@ -122,7 +130,7 @@
 | `type` | string | 固定 `state` |
 | `timestamp` | double | 驱动侧仿真时间戳（秒） |
 | `frame_rate` | double | 帧率（bridge 按相邻两帧时间差计算） |
-| `joint_pos` / `joint_vel` / `joint_acc` / `effort` | double[] | 6 维关节数组 |
+| `joint_pos` / `joint_vel` / `joint_acc` / `effort` | double[] | 6 维关节数组（`joint_pos` 为 **rad**，与 §4 指令里的关节角同单位，可直接回填） |
 | `flange_pos` | double[] | 法兰位姿（平移 + 旋转，长度 6，m/rad） |
 | `tool_index` | int | 当前工具坐标系索引（0~14，0 表示法兰坐标系） |
 | `tool_pose` | double[] | 当前 TCP 位姿（基坐标系下，长度 6，m/rad） |
@@ -351,6 +359,38 @@ public static class SensorFrameDecoder
 > `query_prescan_done`）**始终**路由到 PLANNING；直控指令（`movej` / `movel` / `servo_*` /
 > `start_jog` / `robot_enable` 等）**始终**路由到 DRIVER。仅 `pause` / `resume` / `reset` /
 > `query_motion_done` / `stop` 随模式切换（见 §4.6）。
+>
+> **运动参数量纲（单位约定，前端按此构造参数）**：
+>
+> 指令层单位**统一为「位置 m + 角度 rad」**，所有换算（m↔mm、rad↔deg、比例↔百分比）**只在驱动内部发生**，
+> 前端不需要做任何单位转换；下表数值可直接由通路 B 的状态回填（§3.2），两侧物理语义一致（sim / real 相同）。
+>
+> | 参数 | 指令层单位 | 取值 / 缺省 | 驱动内部换算 |
+> |------|-----------|------------|-------------|
+> | `movej` `q1..q6` | **rad** | 6 维关节角，与 `state.joint_pos` 同单位 | 真实驱动 ×180/π → SDK ° |
+> | `movel` `x,y,z` | **m** | 基坐标系下 TCP 平移 | 真实驱动 ×1000 → SDK mm |
+> | `movel` `rx,ry,rz` | **rad** | TCP 姿态，固定轴 XYZ（`R = Rz·Ry·Rx`） | 真实驱动 ×180/π → SDK ° |
+> | `servoj` `q1..q6` | **rad** | 下一控制周期关节目标 | 真实驱动 ×180/π → SDK ° |
+> | `servo_cart` `x,y,z` / `rx,ry,rz` | **m** / **rad** | 下一控制周期 TCP 目标 | 真实驱动 ×1000 / ×180/π |
+> | `movej` / `movel` 的 `speed` / `acc` | **比例 [0~1]** | 缺省 `0.5`（= 50%）；小于 `0.01` 按 `0.01` 处理 | 内部归一；真实驱动 ×100 → SDK 百分比 |
+> | `start_jog` `speed%` / `acc%` | **百分比 [0~100]** | 缺省 50%（沿用内部默认比例 0.5） | 内部 /100 → 比例（真机再 ×100） |
+> | `start_jog` `max_dis`（第 6 参数） | **已不生效**（协议兼容保留，可不传） | 实际限制由后端配置决定：`driver_params.yaml` 的 `jog_max_dis_joint`（**rad**，关节点动）/ `jog_max_dis_trans`（**m**，平移轴 `axis=1~3`）/ `jog_max_dis_rot`（**rad**，旋转轴 `axis=4~6`），`0` = 不限制 | 配置值在驱动内部换算：rad→° / m→mm；配置为 `0` 时用足够大的 SDK 上限近似 |
+> | 状态回填（§3.2） | `joint_pos` **rad**、`flange_pos` / `tool_pose` **m + rad** | — | 真实驱动内部已换算回 m/rad |
+>
+> 补充说明：
+> - 位姿旋转为**固定轴 XYZ 欧拉角**（`R = Rz·Ry·Rx`）；笛卡尔指令的目标是**基坐标系下的 TCP 位姿**，
+>   工具（探头）坐标系变换同样由驱动内部完成，前端不需要自己换算。
+> - 仿真驱动直接按指令层单位运行（无换算），因此同一组参数在 sim / real 下物理语义完全一致。
+> - `start_jog` 的单次位移上限**不再由前端决定**：第 6 个参数 `max_dis` 仍会被后端解析（协议兼容，可不传），
+>   但不参与运动控制；实际上限取后端配置 `jog_max_dis_joint` / `jog_max_dis_trans` / `jog_max_dis_rot`
+>   （单位与指令层一致：rad / m，`0` = 不限制），前端既不需要也无法覆盖。仿真与真机同样生效。
+> - `start_jog` 的上限按**一次点动行程**累计：达到上限后运动自动停住并保持当前位置（软上限，按控制
+>   周期步进判定，停止位置可能与设定值有微小偏差），前端需先下发 `stop_jog_decel`（或
+>   `stop_jog_immediate`）结束本次行程，之后的点动才从零重新累计。
+> - 速度基准（仅供估算，前端无需换算）：`movej` 关节 1.0 rad/s、`movel` 平移 0.5 m/s / 旋转 1.0 rad/s 对应比例 1.0；
+>   `start_jog` 关节 0.5 rad/s、平移 0.05 m/s、旋转 0.3 rad/s 对应 100%。
+> - 伺服类（`servoj` / `servo_cart`）语义是"**下一控制周期的目标点**"：须在 `servo_start` 之后按控制周期连续下发，
+>   `servo_end` 结束（planning 的 `execute` 内部按 `servo_rate_hz` = 125Hz 下发 `servo_cart`）。
 
 ### 4.1 本地指令（bridge 直接处理，不下发子模块）
 
@@ -372,7 +412,7 @@ public static class SensorFrameDecoder
 |--------|------|--------|------|
 | `pre_scan_start` | 无 | 空 | 预扫查开始（完成后有 `pre_scan_done` 事件） |
 | `pre_scan_end` | 无 | 空 | 预扫查结束（无点云数据则失败 + `error` 事件） |
-| `set_start_pose` | [x, y, z] | 空 | 设置起点（≥3 个参数；支持 3/6/7：位置 / 位置+RPY / 位置+四元数） |
+| `set_start_pose` | [x, y, z] | 空 | 设置起点（≥3 个参数；支持 3/6/7：位置（m） / 位置（m）+RPY（rad） / 位置（m）+四元数 xyzw） |
 | `set_end_pose` | [x, y, z] | 空 | 设置终点（≥3 个参数；同上） |
 | `plan` | 无 | 空 | 开始规划（未完成预扫查或未设置起终点则失败 + `error` 事件；完成后有 `plan_done` 事件） |
 | `execute` | 无 | 空 | 开始执行（伺服按 `servo_rate_hz` 逐点下发；完成后有 `scan_done` 事件） |
@@ -394,11 +434,12 @@ public static class SensorFrameDecoder
 | `get_state` | 无 | [timestamp, q1..q6] | 获取当前关节状态 |
 | `is_motion_done` | 无 | [0/1] | 运动是否完成（servo_end 后活跃伺服段已清理，正确返回 1） |
 | `switch_driver` | [type, ip1, ip2, ip3, ip4] | 空 | 切换 sim(0) / real(1)，IP 四个十进制段 |
-| `movej` | [q1..q6, speed?, acc?] | 空 | 关节运动（≥6 个参数） |
-| `movel` | [x,y,z,rx,ry,rz, speed?, acc?] | 空 | 笛卡尔直线运动（≥6 个参数；目标为 TCP 位姿，基座下 m/rad，工具坐标变换由驱动内部处理） |
-| `servoj` | [q1..q6] | 空 | 关节伺服（≥6 个参数） |
-| `servo_cart` | [x,y,z,rx,ry,rz] | 空 | 笛卡尔伺服（≥6 个参数） |
-| `start_jog` | [ref, axis, dir, speed%, acc%, max_dis?] | 空 | 开始点动（≥5 个参数） |
+| `get_driver_type` | 无 | [0/1] | 查询当前驱动类型：0=仿真（sim），1=真实（real），与 `switch_driver` 的 type 同编码 |
+| `movej` | [q1..q6, speed?, acc?] | 空 | 关节运动（≥6 个参数；`q1..q6` 单位 **rad**，`speed`/`acc` 为比例 [0~1]，缺省 0.5） |
+| `movel` | [x,y,z,rx,ry,rz, speed?, acc?] | 空 | 笛卡尔直线运动（≥3 个参数：3=仅位置（姿态保持当前）、6=完整位姿；目标为 TCP 位姿，基座下 **x,y,z 为 m、rx,ry,rz 为 rad**（固定轴 XYZ）；`speed`/`acc` 为比例 [0~1]；工具坐标变换由驱动内部处理） |
+| `servoj` | [q1..q6] | 空 | 关节伺服（≥6 个参数；单位 **rad**，须在 `servo_start` 后逐控制周期下发） |
+| `servo_cart` | [x,y,z,rx,ry,rz] | 空 | 笛卡尔伺服（≥6 个参数；**m/rad**，基座下 TCP 位姿，须逐控制周期下发） |
+| `start_jog` | [ref, axis, dir, speed%, acc%, max_dis?] | 空 | 开始点动（≥5 个参数；`axis` 1~6，`dir` 0=负/1=正，`speed%`/`acc%` 为百分比 [0~100]；第 6 个参数 `max_dis` **已不生效**（协议兼容保留，可不传），实际上限由后端 `driver_params.yaml` 决定） |
 | `stop_jog_decel` | 无 | 空 | 点动减速停止 |
 | `stop_jog_immediate` | 无 | 空 | 点动立即停止 |
 | `servo_start` | 无 | 空 | 伺服模式开始 |

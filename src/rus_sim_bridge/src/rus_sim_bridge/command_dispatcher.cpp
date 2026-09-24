@@ -47,6 +47,7 @@ namespace rus_sim_bridge {
         registry_.Register(CmdName::kGetState,         {Module::DRIVER});
         registry_.Register(CmdName::kIsMotionDone,     {Module::DRIVER});
         registry_.Register(CmdName::kSwitchDriver,     {Module::DRIVER});
+        registry_.Register(CmdName::kGetDriverType,    {Module::DRIVER});
         registry_.Register(CmdName::kMoveJ,            {Module::DRIVER});
         registry_.Register(CmdName::kMoveL,            {Module::DRIVER});
         registry_.Register(CmdName::kServoJ,           {Module::DRIVER});

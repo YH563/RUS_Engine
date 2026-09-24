@@ -19,6 +19,11 @@ namespace RusDriverNode {
         // 工具坐标系参数（driver_params.yaml）：每 6 个一组 [x,y,z,rx,ry,rz]，0 = 法兰坐标系
         declare_parameter<std::vector<double>>("tool_coords", {0.0, 0.0, 0.0, 0.0, 0.0, 0.0});
         declare_parameter<int>("tool_index", 0);
+        // 点动（start_jog）单次位移上限（rad = 关节/笛卡尔旋转轴，m = 笛卡尔平移轴；0 = 不限制）
+        // 前端传入的 max_dis 不参与控制，实际生效的上限一律取本配置（见 jog_limit_for）
+        jog_max_dis_joint_ = declare_parameter<double>("jog_max_dis_joint", 1.5708);  // 90°
+        jog_max_dis_trans_ = declare_parameter<double>("jog_max_dis_trans", 0.15);    // 150 mm
+        jog_max_dis_rot_   = declare_parameter<double>("jog_max_dis_rot",   1.5708);  // 90°
 
         // 工具坐标系持久化文件路径（默认 ~/.rus_sim/tool_coords.yaml）
         if (tool_coords_file_.empty()) {
@@ -78,11 +83,25 @@ namespace RusDriverNode {
             std::chrono::milliseconds(8),
             std::bind(&DriverNode::publish_state, this));
 
+        RCLCPP_INFO(get_logger(),
+            "点动单次上限: 关节=%.4f rad, 平移=%.4f m, 旋转=%.4f rad（0 = 不限制；前端 max_dis 不生效）",
+            jog_max_dis_joint_, jog_max_dis_trans_, jog_max_dis_rot_);
         RCLCPP_INFO(get_logger(), "DriverNode 启动完成");
     }
 
     RusSimRobotDriver::RobotSimDriver& DriverNode::sim_driver() {
         return static_cast<RusSimRobotDriver::RobotSimDriver&>(*driver_);
+    }
+
+    // ============================================================
+    //  jog_limit_for — 点动单次位移上限（来自 driver_params.yaml）
+    //  单位与指令层一致：rad（关节点动 JOG_0 / 笛卡尔旋转轴 nb=4~6）、m（笛卡尔平移轴 nb=1~3）
+    //  前端 start_jog 传入的 max_dis 仅解析、不参与控制，实际上限一律取本配置；
+    //  真实驱动在内部换算为 SDK 的 °/mm，仿真驱动直接按此值限制单次点动距离。
+    // ============================================================
+    double DriverNode::jog_limit_for(uint8_t type, uint8_t axis) const {
+        if (type == RusRobotDriver::MOTION_TYPE_JOG_0) return jog_max_dis_joint_;
+        return (axis > 3) ? jog_max_dis_rot_ : jog_max_dis_trans_;
     }
 
     DriverNode::~DriverNode() = default;
@@ -182,7 +201,11 @@ namespace RusDriverNode {
                     case MOTION_TYPE_SERVOC:  return driver_->ServoCart(cmd) == 0;
                     case MOTION_TYPE_JOG_0:
                     case MOTION_TYPE_JOG_1:
-                    case MOTION_TYPE_JOG_2:   return driver_->StartJOG(cmd) == 0;
+                    case MOTION_TYPE_JOG_2:
+                        // 点动单次位移上限一律取 driver_params.yaml 配置：
+                        // 前端 start_jog 的 max_dis 仅解析、不参与控制（见 jog_limit_for）
+                        cmd.jog_max_dis = jog_limit_for(cmd.type, cmd.jog_axis);
+                        return driver_->StartJOG(cmd) == 0;
                     default:                  return false;
                 }
             },
@@ -210,6 +233,8 @@ namespace RusDriverNode {
                 return ret == 0;
             },
             [&](const IsMotionDoneCmd&)  { result = {driver_->IsMotionDone() ? 1.0 : 0.0}; return true; },
+            // 查询当前驱动类型：0=仿真（sim），1=真实（real），与 switch_driver 的 type 参数同编码
+            [&](const GetDriverTypeCmd&) { result = {is_sim_ ? 0.0 : 1.0}; return true; },
 
             // ── 仿真控制（仅 Sim 驱动有效；真实驱动下返回失败，避免非法向下转型） ──
             [&](const SetTimeSpeedCmd& s)  {

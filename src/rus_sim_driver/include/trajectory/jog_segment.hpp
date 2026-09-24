@@ -17,7 +17,9 @@ namespace RusRobotDriver {
      *   - MOTION_TYPE_JOG_2：工具坐标系点动，沿工具坐标轴平移/旋转
      *
      * 每帧按恒定速度积分位置，输出 q/qd（qdd = 0）。
-     * 当 jog_max_dis > 0 时，到达累积位移上限后自动结束。
+     * 当 jog_max_dis > 0 时（单位 rad（关节与笛卡尔旋转轴）或 m（笛卡尔平移轴），与指令层一致），
+     * 到达累积位移上限后自动结束。该值由 driver_node 按 driver_params.yaml 的
+     * jog_max_dis_joint / jog_max_dis_trans / jog_max_dis_rot 注入，前端传入的 max_dis 不参与控制。
      */
     class JogSegment : public ITrajectorySegment {
     public:
@@ -47,7 +49,8 @@ namespace RusRobotDriver {
         /**
          * @brief 检查是否到达最大位移上限
          *
-         * @return true  jog_max_dis > 0 且累积位移已达上限
+         * @return true  jog_max_dis > 0（rad / m）且累积位移已达上限（软上限：按控制周期步进判定，
+         *               停止位置可能与设定值有微小偏差）
          * @return false 继续运动
          */
         bool IsFinished() const override;

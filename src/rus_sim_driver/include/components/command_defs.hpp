@@ -47,6 +47,8 @@ namespace RusRobotDriver {
 
         // ── 驱动切换 ──
         inline constexpr std::string_view kSwitchDriver   = "switch_driver";
+        // 查询当前驱动类型：0=仿真（sim），1=真实（real），与 switch_driver 的 type 参数同编码
+        inline constexpr std::string_view kGetDriverType  = "get_driver_type";
 
         // ── 仿真控制（仅 Sim 驱动） ──
         inline constexpr std::string_view kSetTimeSpeed    = "set_time_speed";

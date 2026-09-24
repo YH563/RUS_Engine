@@ -51,6 +51,18 @@ namespace RusDriverNode {
         // 运行时切换驱动（switch_driver 指令）
         bool switch_driver_impl(uint8_t type, const std::string& ip);
 
+        /**
+         * @brief 取点动单次位移上限（来自 driver_params.yaml 配置）
+         *
+         * 单位与指令层一致：rad（关节点动 JOG_0 / 笛卡尔旋转轴 nb=4~6）、
+         * m（笛卡尔平移轴 nb=1~3）；0 = 不限制。
+         * 前端 start_jog 传入的 max_dis 仅解析、不参与控制，实际上限一律取本配置。
+         *
+         * @param type MotionCommand.type（MOTION_TYPE_JOG_0/1/2）
+         * @param axis 点动轴号 nb（1~6）
+         */
+        double jog_limit_for(uint8_t type, uint8_t axis) const;
+
         // 执行指令文件
         bool run_script(const std::string& path);
 
@@ -95,6 +107,11 @@ namespace RusDriverNode {
         std::vector<std::vector<double>> tool_coords_;
         int tool_index_param_{0};     // 当前工具坐标系索引（持久化）
         std::string tool_coords_file_;  // 工具坐标系配置文件路径
+
+        // 点动（start_jog）单次位移上限（driver_params.yaml；单位 rad = 关节/旋转轴，m = 平移轴；0 = 不限制）
+        double jog_max_dis_joint_{1.5708};  // 关节点动 JOG_0（90°）
+        double jog_max_dis_trans_{0.15};    // 笛卡尔平移（JOG_1/2 轴 1~3，150 mm）
+        double jog_max_dis_rot_{1.5708};    // 笛卡尔旋转（JOG_1/2 轴 4~6，90°）
 
         // 安全获取仿真驱动引用（仅在 is_sim_==true 时调用，实现在 .cpp）
         RusSimRobotDriver::RobotSimDriver& sim_driver();

@@ -324,9 +324,11 @@ uint8[] data          # 压缩后 payload
 
 ### 6.2 → PLANNING（`/planning/command`）
 
+> 位姿参数单位见 §6.3 单位约定：位置 **m**、RPY **rad**（固定轴 XYZ），可直接回填 `/driver/state`。
+
 | 指令 | args 校验 | result | 说明 |
 |------|----------|--------|------|
-| `set_start_pose` | ≥3（3=位置 / 6=位置+RPY / 7=位置+四元数） | 空 | `MakePose()` |
+| `set_start_pose` | ≥3（3=位置(m) / 6=位置+RPY(rad) / 7=位置+四元数 xyzw） | 空 | `MakePose()` |
 | `set_end_pose` | ≥3（同上） | 空 | `MakePose()` |
 | `plan` | 无 | 空 | 预扫查门 + 起终点门；成功发 `plan_done`，失败发 `error` |
 | `execute` | 无 | 空 | movel 到起点 → `servo_start` → 125Hz 下发 `servo_cart`；结束/中止发 `scan_done` |
@@ -337,6 +339,16 @@ uint8[] data          # 压缩后 payload
 
 ### 6.3 → DRIVER（`/driver/command`）
 
+> **单位约定**（与前端协议一致）：位置 **m**、角度 **rad**；RPY 为固定轴 XYZ（`R = Rz·Ry·Rx`），
+> 与 `/driver/state` 的 `flange_pos`（m/rad）同量纲，可直接回填。
+> 指令层（bridge / planning / `MotionCommand`）**不做任何单位换算**：`movej`/`movel` 的 `speed`/`acc` 为
+> **比例 [0~1]**（缺省 0.5），`start_jog` 的 `speed%`/`acc%` 为 **百分比 [0~100]**（内部 /100），
+> `jog` 的单次位移上限**改由配置决定**：`driver_params.yaml` 的 `jog_max_dis_joint`（rad，关节）/
+> `jog_max_dis_trans`（m，平移轴 1~3）/ `jog_max_dis_rot`（rad，旋转轴 4~6），`0` = 不限制，
+> 由 `driver_node::jog_limit_for` 注入；前端 `start_jog` 传入的 `max_dis` 仅解析、不参与控制。
+> SDK 量纲（°/mm）的换算只在 `RobotRealDriver::StartJOG` / `MoveJ` / `MoveL` / `ServoJ` / `ServoCart`
+> 等真实驱动实现内部完成（配置为 `0` 时用足够大的 SDK 上限近似；`kRad2Deg` / `kM2Mm`）。
+
 | 指令 | args 校验 | result | 说明 |
 |------|----------|--------|------|
 | `connect` / `disconnect` | 无 | 空 | 用参数 `robot_ip` |
@@ -346,11 +358,12 @@ uint8[] data          # 压缩后 payload
 | `get_state` | 无 | `[timestamp, q1..q6]` | |
 | `is_motion_done` | 无 | `[0/1]` | |
 | `switch_driver` | ≥1 | 空 | `[type, ip1,ip2,ip3,ip4]`；type 0=sim、1=real；不足 5 个则沿用当前 `robot_ip` |
-| `movej` | ≥6 | 空 | `[q1..q6, speed?, acc?]` |
-| `movel` | ≥3 | 空 | `[x,y,z(,rx,ry,rz)(,speed,acc)]`；目标为 **TCP** 位姿，工具变换由驱动内部处理 |
-| `servoj` | ≥6 | 空 | 关节伺服 |
-| `servo_cart` | ≥6 | 空 | 笛卡尔伺服（planning 内部按 125Hz 调用） |
-| `start_jog` | ≥5 | 空 | `[ref, axis, dir, speed%, acc%, max_dis?]`，speed/acc 为百分比（内部 /100） |
+| `get_driver_type` | 无 | `[0/1]` | 当前驱动类型：0=sim、1=real（与 `switch_driver` 的 type 同编码） |
+| `movej` | ≥6 | 空 | `[q1..q6(rad), speed?, acc?]`，speed/acc 为比例 [0~1]（缺省 0.5） |
+| `movel` | ≥3 | 空 | `[x,y,z(m)(,rx,ry,rz(rad))(,speed,acc)]`；3=仅位置（姿态保持）、6=完整位姿；目标为 **TCP** 位姿，工具变换由驱动内部处理 |
+| `servoj` | ≥6 | 空 | 关节伺服（`q` 单位 rad，`servo_start` 后逐控制周期下发） |
+| `servo_cart` | ≥6 | 空 | 笛卡尔伺服（`m/rad`，基座下 TCP 位姿；planning 内部按 125Hz 调用） |
+| `start_jog` | ≥5 | 空 | `[ref, axis, dir, speed%, acc%, max_dis?]`，speed/acc 为百分比 [0~100]（内部 /100）；`max_dis` 仅解析、**不参与控制**，实际上限取 `driver_params.yaml` 的 `jog_max_dis_joint`/`_trans`/`_rot`（rad / m，0=不限；真实驱动内部转 °/mm） |
 | `stop_jog_decel` / `stop_jog_immediate` | 无 | 空 | |
 | `servo_start` / `servo_end` | 无 | 空 | 伺服模式开关 |
 | `run_file` | 无 | 空 | 执行 `script_path` 指定的指令文件 |
@@ -490,6 +503,9 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | `tool_coords` | double[] | `[0,0,0,0,0,0]` | 12 个值（2 组） | 每 6 个一组 [x,y,z,rx,ry,rz]，0=法兰 |
 | `tool_index` | int | 0 | 1 | 当前工具坐标系索引 |
 | `tool_coords_file` | string | `~/.rus_sim/tool_coords.yaml` | `""`（即用默认） | 工具坐标系持久化文件 |
+| `jog_max_dis_joint` | double | 1.5708 | 1.5708 | 关节点动单次上限（rad，90°）；0 = 不限制 |
+| `jog_max_dis_trans` | double | 0.15 | 0.15 | 笛卡尔平移点动上限（m，150 mm）；0 = 不限制 |
+| `jog_max_dis_rot` | double | 1.5708 | 1.5708 | 笛卡尔旋转点动上限（rad，90°）；0 = 不限制 |
 
 ### 8.5 `recorder_node`（`config/recorder_params.yaml`）
 
