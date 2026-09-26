@@ -1,4 +1,4 @@
-# RUS_Sim 前端通信协议 v0.3
+# RUS_Sim 前端通信协议 v0.4
 
 > 目标：前端（Avalonia）与后端之间通过 WebSocket 通信。bridge 为**纯网关**，
 > 只做解析 / 路由 / 转发，不含业务逻辑。本协议是前后端唯一的接口契约，
@@ -17,6 +17,12 @@
 > 7. **点动上限后端化**：`start_jog` 的单次位移上限改由后端配置（`driver_params.yaml` 的
 >    `jog_max_dis_joint` / `jog_max_dis_trans` / `jog_max_dis_rot`）决定；第 6 个参数 `max_dis`
 >    仍可传但不生效（协议兼容保留），前端**不必再传**。
+> 8. **回放指令 / 文本结果（v0.4 新增）**：`replay_*` 由回放节点（`/replayer/command`）处理，
+>    用于离线复盘录音（§4.7）；回执/事件新增可选字段 **`strings`（string[]）** 承载文本结果
+>    （数值仍走 `result`；两者可同时出现，见 §3.1）。
+> 9. **录制开关指令（v0.4 新增）**：`recorder_start` / `recorder_stop` / `recorder_status` 由录制节点
+>    （`/recorder/command`）处理，用于运行期开 / 关落盘（§4.8）。节点默认**启动即录**
+>    （参数 `autostart=true`），因此不接这三条指令时行为与以前完全一致。
 
 ---
 
@@ -77,14 +83,18 @@
 
 ```json
 // reply：成功 / 失败
-{ "type": "reply", "id": 1, "success": true,  "message": "ok", "result": [1.0] }
-{ "type": "reply", "id": 2, "success": false, "message": "unknown command: xxx", "result": [] }
+{ "type": "reply", "id": 1, "success": true,  "message": "ok", "result": [1.0], "strings": [] }
+{ "type": "reply", "id": 2, "success": false, "message": "unknown command: xxx", "result": [], "strings": [] }
+
+// reply：查询类带文本结果（v0.4；例：replay_list 列出录音文件）
+{ "type": "reply", "id": 3, "success": true, "message": "4 个录音文件（清单见 strings）",
+  "result": [4.0, 0.0], "strings": ["run_20260926_120000.rusrec", "run_20260926_120500.rusrec"] }
 
 // event：异步完成通知（id 固定 0，ack_id 关联原指令）
 { "type": "event", "id": 0, "ack_id": 3, "event": "pre_scan_done",
-  "success": true, "message": "", "result": [] }
+  "success": true, "message": "", "result": [], "strings": [] }
 { "type": "event", "id": 0, "ack_id": 3, "event": "error",
-  "success": false, "message": "plan failed: 未完成预扫查（无点云数据）", "result": [] }
+  "success": false, "message": "plan failed: 未完成预扫查（无点云数据）", "result": [], "strings": [] }
 ```
 
 | 字段 | 类型 | reply | event | 说明 |
@@ -94,8 +104,13 @@
 | `ack_id` | uint32 | ❌ | ✅ | 触发该事件的 command id（0 = 模块自发，无关联） |
 | `event` | string | ❌ | ✅ | 事件名（见 §5） |
 | `success` | bool | ✅ | ✅ | 是否成功 |
-| `message` | string | ✅ | ✅ | 错误描述 / 附加说明（成功可为空串） |
-| `result` | double[] | ✅ | ✅ | 处理结果（查询类带数据，操作类为空数组） |
+| `message` | string | ✅ | ✅ | 错误描述 / 附加说明（成功可为空串；多模块扇出成功时统一为 `ok`） |
+| `result` | double[] | ✅ | ✅ | **数值**结果（查询类带数据，操作类为空数组） |
+| `strings` | string[] | ✅ | ✅ | **文本**结果（v0.4；查询类带文本，如录音文件清单 / 当前文件名）；旧前端可忽略该字段 |
+
+> **`result` vs `strings`**：两者都是"查询类指令的结果载荷"，只是类型不同（协议层任何参数/回执
+> 的数值通道只有 `double`，文本必须走 `strings`）。操作类指令两者都为空数组；失败时
+> **一律看 `message`**（`result` / `strings` 可能为空）。
 
 **路由语义（重要）**：
 
@@ -489,6 +504,8 @@ public static class SensorFrameDecoder
 | `stop` | 扇出 `{PLANNING, DRIVER}` | 仅 DRIVER（急停直达） |
 | `pre_scan_*` / `set_*_pose` / `plan` / `execute` / `query_prescan_done` | → PLANNING | → PLANNING（不变） |
 | 直控指令（`movej` / `servo_*` / `start_jog` 等） | → DRIVER | → DRIVER（不变） |
+| 回放指令（`replay_*`） | → REPLAYER | → REPLAYER（不变，与手动/自动无关） |
+| 录制指令（`recorder_*`） | → RECORDER | → RECORDER（不变，与手动/自动无关） |
 
 **切手动时的联动**：bridge 在切入手动瞬间向 planning 下发一条 `stop`
 （`send_raw_to_module`），终止任何进行中的扫查，避免手动直控与扫查冲突。
@@ -496,6 +513,157 @@ public static class SensorFrameDecoder
 **建议**：前端默认使用自动模式；仅在需要底层层级调试（工程师通路）时切手动。
 
 ---
+
+### 4.7 路由到 REPLAYER（离线回放）
+
+> 回放节点 `replayer_node`（可执行 `rus_sim_recorder_replay`，服务 `/replayer/command`）
+> 把 `.rusrec` 录音**按时间轴重发回录制时的话题**，用于无设备复现问题与前端联调；
+> 录音格式与时间轴口径见 `docs/Protocol/RecFormat.md` §7.4。
+>
+> 与在线链路的关系：回放是**旁路** —— 默认发回录制时的话题（`/driver/state`、
+> `/sensor/pointcloud`），因此 bridge 会像实时一样把它呈现到前端 `/state` / `/sensor`；
+> **真驱动 / 真机在线时会撞话题**，须先停驱动或用 `topic_prefix` 隔离（见文末"回放口径"）。
+> 本节 10 条指令**不随模式切换**（手动 / 自动与回放无关），始终路由到 REPLAYER。
+
+**状态编码（`state`，出现在多个 result 的首位）**
+
+| 值 | 含义 | 说明 |
+|----|------|------|
+| 0 | `idle` | 未载入 / 已 `replay_stop`（游标回到起点，文件仍载入） |
+| 1 | `playing` | 正在按时间轴发布 |
+| 2 | `paused` | 暂停 / 刚载入（停在起点，等 `replay_start`） |
+| 3 | `finished` | 播放到末尾（`loop=true` 时不停，回到起点继续） |
+
+**`replay_status` 的 result 字段（定长 9 项，顺序是协议的一部分）**
+
+| 下标 | 字段 | 单位 / 取值 |
+|------|------|-------------|
+| 0 | `state` | 0~3（上表） |
+| 1 | `progress` | s（相对文件起点；= 下一条待发布记录的时间） |
+| 2 | `duration` | s（录音时长 = 末条时间 - 首条时间） |
+| 3 | `speed` | 倍速（0.05 ~ 20） |
+| 4 | `cursor` | 记录游标（= `records` 时表示已播完） |
+| 5 | `records` | 录音记录总数（含全部通道） |
+| 6 | `loaded` | 1 = 已载入录音，0 = 无 |
+| 7 | `file_index` | 当前文件在目录清单中的序号 |
+| 8 | `file_count` | 目录内录音文件数（含 `file_path` 指定的那一个） |
+
+同样的 9 项也作为 `replay_start` / `replay_pause` / `replay_resume` / `replay_stop` /
+`replay_seek` / `replay_step` 的 result 返回（前端无需再补一次 `replay_status`）。
+
+| 指令名 | args | result | strings | 说明 |
+|--------|------|--------|---------|------|
+| `replay_list` | 无 | [文件数, 当前序号] | 全部录音文件名（文件名升序） | 列出可回放录音（前端下拉列表数据源） |
+| `replay_load` | [序号?] | [文件数, 当前序号] | [已载入文件名] | 载入录音（缺省 = 保持当前序号）；载入后 `state=2`、游标归零；**无尾索引的崩溃录音同样可载入** |
+| `replay_start` | [倍速?] | 9 项（见上） | — | 开始播放（未载入时按启动参数自动载入）；可选倍速（0.05~20） |
+| `replay_pause` | 无 | 9 项 | — | 暂停（进度冻结；非 playing 返回失败） |
+| `replay_resume` | 无 | 9 项 | — | 从暂停处继续（不跳时间） |
+| `replay_stop` | 无 | 9 项 | — | 停止并复位到起点（文件保留，可直接再 start） |
+| `replay_seek` | [t] | 9 项 | — | 跳到相对文件起点 `t` 秒（定位到第一条 ≥ t 的记录）；播放中跳转后以新位置重新起拍 |
+| `replay_set_speed` | [speed] | [speed] | — | 设置倍速（越界钳位；播放中即时生效且不跳时间） |
+| `replay_step` | [n?] | 9 项 | — | 单步发布 n 条（缺省 1；仅 paused / idle 可用） |
+| `replay_status` | 无 | 9 项 | [当前文件名]（未载入时为空） | 查询状态（前端进度条 / 时间轴数据源） |
+
+**典型时序（前端时间轴控件 → 指令映射）**
+
+```
+前端                                    后端
+ │  replay_list ──────────────► reply result=[4, 0] strings=["run_…_120000.rusrec", …]
+ │  replay_load [1] ──────────► reply result=[4, 1] strings=["run_…_120500.rusrec"]
+ │  replay_start [2.0] ───────► reply result=[1, 0, 2.4, 2.0, 0, 30, 1, 1, 4]
+ │                               （/state 与 /sensor 通道开始出现回放数据）
+ │  replay_pause ─────────────► reply result=[2, 1.1, 2.4, 2.0, 13, 30, 1, 1, 4]
+ │  replay_seek [0.0] ────────► reply result=[2, 0.0, 2.4, 2.0, 0, 30, 1, 1, 4]
+ │  replay_resume ────────────► reply result=[1, 0.0, 2.4, 2.0, 0, 30, 1, 1, 4]
+ │  ◄── event replay_done (ack_id = replay_start 的 id，result=[已发布条数])
+```
+
+**回放口径（与后端实现一致，前端不做任何换算）**
+
+- **时间轴基准**由回放节点参数 `time_source` 决定：`stamp`（默认，消息时间戳）/ `recv`
+  （录制入队时刻）；`progress`、`duration`、`replay_seek` 都在同一条轴上。
+- **不重打时间戳、不改 payload**：回放原样重发录制字节，`/state.timestamp` 仍是录制时刻，
+  前端解析路径与实时完全一致（只是时间在"往回走"）。
+- **话题隔离**：`topic_prefix` 非空时发布到 `<prefix><原话题>`（如 `/replay/driver/state`）；
+  给的是前缀而不是完整话题，故**消息类型不变**。
+- **失败语义**：读盘 / CRC 校验失败 → 停止回放 + 广播 `error` 事件（`ack_id` = 触发播放的
+  指令 id），**不会继续发坏数据**；载入失败（文件不存在 / 序号越界 / 无记录）由 `reply.success=false`
+  + `message` 说明。
+- **文件来源**：录音目录由节点参数 `record_dir`（与 recorder 的 `output_dir` 对齐）决定；
+  清单只按文件名升序（recorder 文件名里含时间戳 → 即时间顺序），**不接受前端传路径**
+  （协议数值通道只传 `double`，路径属于后端配置）。
+
+### 4.8 路由到 RECORDER（录制开关）
+
+> 录制节点 `recorder_node`（可执行 `rus_sim_recorder_node`，服务 `/recorder/command`）
+> 把 `/driver/state`（通道 0）与 `/sensor/pointcloud`（通道 1）落成 `.rusrec`
+> （格式与体检见 `docs/Protocol/RecFormat.md`）。本节 3 条指令用于**运行期开关落盘**：
+> 不决定"录什么"（通道由启动参数 `record_state` / `record_sensor` 决定），只决定"录不录"。
+>
+> 默认 `autostart=true`：节点起来就开始录（等价于启动后立刻收到一次 `recorder_start`），
+> 因此**不接这三条指令时行为与以前完全一致**；要"由前端决定何时开录"就设 `autostart=false`。
+>
+> 与在线链路的关系：录制是**旁路** —— 只订阅、不发布，各模块与前端可视化都不需要
+> 感知它是否在录；`recorder_stop` 只是停写盘，话题流照常。本节 3 条指令
+> **不随模式切换**（手动 / 自动与录制无关），始终路由到 RECORDER。
+
+**状态编码（`state`，`recorder_status.result[0]`）**
+
+| 值 | 含义 | 说明 |
+|----|------|------|
+| 0 | `stopped` | 未录制（未开始 / 已 `recorder_stop`）；文件保留，可直接再 `recorder_start` |
+| 1 | `recording` | 录制中 |
+| 2 | `failed` | 写失败熔断（磁盘满 / 无权限等）：**不可再 start**，检查磁盘后重启节点 |
+
+**`recorder_status` 的 result 字段（定长 7 项，顺序是协议的一部分）**
+
+| 下标 | 字段 | 单位 / 取值 |
+|------|------|-------------|
+| 0 | `state` | 0~2（上表） |
+| 1 | `records` | 本次进程累计写入记录数（跨 `start` / `stop`，不清零） |
+| 2 | `payload_mib` | 累计 payload 体积（MiB） |
+| 3 | `file_mib` | 当前 / 最后文件的已写字节（MiB；未录过为 0） |
+| 4 | `dropped` | 异常丢弃记录数（队列满 / 写失败）；**停录期间到达的数据不计入** |
+| 5 | `throttled` | 限流丢弃记录数（`state_max_rate_hz` / `sensor_max_rate_hz` 命中） |
+| 6 | `files` | 已创建的录音文件数（含当前；滚动 / 重新 `start` 都 +1） |
+
+同样的 7 项也作为 `recorder_start` / `recorder_stop` 的 result 返回（前端无需再补一次 `recorder_status`）。
+
+| 指令名 | args | result | strings | 说明 |
+|--------|------|--------|---------|------|
+| `recorder_start` | 无 | 7 项（见上） | [新文件名] | 开始录制：打开**新文件**（本次运行第一个文件 = `<prefix>_<时间戳>.rusrec`，之后一律带 `_pNNN` 后缀，**绝不覆盖**已有录音）。已在录制 / `enabled=false` / 已熔断 → `success=false` + `message` |
+| `recorder_stop` | 无 | 7 项 | [已封存文件名] | 停录：先把已入队数据**写完**再封存（写尾索引 + Footer），文件可立即回放 / 体检；未在录制 → `success=false` |
+| `recorder_status` | 无 | 7 项 | [当前 / 最后文件名]（从未录过时为空） | 查询状态（前端录制指示 / 计时数据源） |
+
+**典型时序（前端录制按钮 → 指令映射）**
+
+```
+前端                                       后端
+ │  recorder_status ─────────► reply result=[0, 0, 0.0, 0.0, 0, 0, 0]（未开始）
+ │  recorder_start ──────────► reply result=[1, 0, 0.0, 0.0, 0, 0, 1]
+ │                              strings=["run_20260926_141530.rusrec"]（新文件已建好）
+ │  …（录制中：/driver/state、/sensor/pointcloud 持续入队落盘）…
+ │  recorder_status ──────────► reply result=[1, 15234, 96.7, 12.4, 0, 0, 1]
+ │  recorder_stop ────────────► reply result=[0, 15240, 96.8, 13.1, 0, 0, 1]
+ │                              strings=["run_20260926_141530.rusrec"]（已写尾索引，可回放）
+```
+
+**录制口径（与后端实现一致，前端不做任何换算）**
+
+- **不阻塞数据流**：订阅回调只做 CDR 序列化 + 入队，落盘由独立写线程负责；队列满
+  （默认 2048 条 / 256 MiB，见 `recorder_params.yaml`）丢新并计入 `dropped`，
+  **绝不拖慢 driver / perception**。
+- **停录期间不计数**：`recorder_stop` 之后到达的消息**不入队、不计 `dropped`**
+  （那是"异常丢数据"的计数）；再次 `recorder_start` 从**新文件 + 当前时刻**继续录，
+  中间空档不补。
+- **每次 start 都是新文件**：文件名 `<prefix>_<时间戳>_pNNN.rusrec`（本次运行第一个文件无
+  `_pNNN`），因此 stop→start 不会截断 / 覆盖上一次录音；时间戳取自**节点启动时刻**，序号递增。
+- **封存时机**：`recorder_stop` 的 reply 返回即代表尾索引已写完（random access 可用）；
+  进程被强杀（未 stop）的文件没有尾索引，仍可 `inspect --scan` / 回放（`RecFormat.md` §7.4）。
+- **失败语义**：`enabled=false`（不订阅不落盘）、无可用通道、输出目录不可用 →
+  `recorder_start` 返回 `success=false` + 原因（节点日志有对应 ERROR / WARN）；
+  写盘失败（磁盘满等）→ 节点**熔断**（停录 + ERROR 日志），此后 `state=2`、`start` 一律失败，
+  需重启节点；写线程 **3 s** 内未完成开 / 封 → 该次指令返回超时失败（状态以 `recorder_status` 为准）。
 
 ## 5. 事件清单（异步通知）
 
@@ -505,7 +673,8 @@ public static class SensorFrameDecoder
 | `plan_done` | 轨迹规划完成 | `plan` | true | 空 |
 | `scan_done` | 正式扫查执行完成 / 被 stop 中断 | `execute` | true / false（中断） | 空 |
 | `motion_done` | 当前运动完成（预留） | 任意运动指令 | true | 空 |
-| `error` | 模块错误（预扫查门 / 规划失败等） | 触发指令 | false | 空 |
+| `replay_done` | 回放播到末尾（`loop=false`；`loop=true` 时不发） | `replay_start` / `replay_resume` | true | [已发布条数] |
+| `error` | 模块错误（预扫查门 / 规划失败 / 回放读盘失败等） | 触发指令 | false | 空 |
 
 **典型失败场景**：
 - 未 `pre_scan_end` 直接 `plan` → `error`，`message="plan failed: 未完成预扫查（无点云数据）"`。
@@ -567,3 +736,7 @@ public static class SensorFrameDecoder
 | 指令 → 模块路由配置 | `rus_sim_utils/command_registry.hpp` + bridge `command_dispatcher.cpp` |
 | bridge 实际路由表 | `rus_sim_bridge/src/command_dispatcher.cpp` `init_routing()` |
 | planning 状态机 / 事件发布 | `rus_sim_planning/planning_node.hpp` |
+| 模块回执的文本结果通道（`strings`） | `rus_sim_interfaces/srv/CommandService.srv` + `rus_sim_utils/protocol.hpp`（`ResultMessage::strings`） |
+| 回放节点（时间轴 / 泛型重发 / `replay_*` 指令） | `rus_sim_recorder/include/rus_sim_replayer/replay_node.hpp` |
+| 录制节点（双路落盘 / `/recorder/command` 的 3 条 `recorder_*` 指令） | `rus_sim_recorder/include/rus_sim_recorder/recorder_node.hpp` |
+| 录音文件读取（时间轴 / 随机访问） | `rus_sim_recorder/include/storage/rec_reader.hpp` |

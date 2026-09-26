@@ -25,7 +25,7 @@
 | `rus_sim_driver` | ament_cmake | Fairino 机器人驱动（真实 + MuJoCo 仿真） | 库 `driver_core`、可执行 `rus_sim_driver_node` |
 | `rus_sim_perception` | ament_cmake | 点云实时建图 / 预处理 → `/preprocessed_cloud` | 库 `perception_core`、`rus_sim_perception_node`、工具 `rus_sim_gen_test_cloud` |
 | `rus_sim_planning` | ament_cmake | 点云轨迹生成 + 插值 + 伺服执行 | 库 `planning_core`、可执行 `rus_sim_planning_node` |
-| `rus_sim_recorder` | ament_cmake | 记录层：双路数据流落盘 `.rusrec`（离线复盘） | 库 `rec_storage`（纯 std）/ `recorder_core`、可执行 `rus_sim_recorder_node`、工具 `rus_sim_recorder_inspect` |
+| `rus_sim_recorder` | ament_cmake | 记录 / 回放层：双路数据流落盘 `.rusrec` + 按时间轴重发（离线复盘） | 库 `rec_storage`（纯 std）/ `recorder_core` / `replay_core`、可执行 `rus_sim_recorder_node` / `rus_sim_recorder_replay`、工具 `rus_sim_recorder_inspect` |
 | `rus_sim_bringup` | ament_cmake（仅 launch） | 一键拉起全系统 | 无编译单元，只 install `launch/` |
 
 ### 1.2 节点 / 可执行 / 端口
@@ -36,7 +36,8 @@
 | `driver_node` | `ros2 run rus_sim_driver rus_sim_driver_node` | 服务 `/driver/command`；话题 `/driver/state`、`/joint_states` |
 | `planning_node` | `ros2 run rus_sim_planning rus_sim_planning_node` | 服务 `/planning/command`；话题 `/planned_trajectory` |
 | `perception_node` | `ros2 run rus_sim_perception rus_sim_perception_node` | 服务 `/perception/command`；话题 `/preprocessed_cloud`、`/perception/frame`、`/sensor/pointcloud` |
-| `recorder_node` | `ros2 run rus_sim_recorder rus_sim_recorder_node` | 只订阅（`/driver/state`、`/sensor/pointcloud`）；落地文件 `records/*.rusrec` |
+| `recorder_node` | `ros2 run rus_sim_recorder rus_sim_recorder_node` | 服务 `/recorder/command`（3 条 `recorder_*`：运行期开 / 关 / 查落盘）；只订阅（`/driver/state`、`/sensor/pointcloud`）；落地文件 `records/*.rusrec`（默认启动即录，`autostart=false` 则等指令） |
+| `replayer_node` | `ros2 run rus_sim_recorder rus_sim_recorder_replay` | 服务 `/replayer/command`（10 条 `replay_*`）；发布话题 = 录音里的原话题（`topic_prefix` 可隔离） |
 | （工具） | `ros2 run rus_sim_recorder rus_sim_recorder_inspect` | 离线体检 `.rusrec`（无需 ROS 图，可直跑 `install/.../lib/rus_sim_recorder/` 下的可执行） |
 
 > 可执行名一律 `<包名>_node`，与包内 `project()` 名相同但**不是** `project()` 名的自动结果，均为显式 `add_executable()`（见各包 CMakeLists）。
@@ -133,6 +134,7 @@ ros2 launch rus_sim_driver driver.launch.py        # 驱动 + robot_state_publis
 ros2 launch rus_sim_planning planning.launch.py    # 规划
 ros2 launch rus_sim_perception perception.launch.py# 感知
 ros2 launch rus_sim_recorder recorder.launch.py    # 录制（默认录到 records/）
+ros2 launch rus_sim_recorder replayer.launch.py    # 回放（离线复盘；默认载入 records/ 第 0 个）
 ros2 launch rus_sim_driver keyboard_control.launch.py  # 键盘点动
 
 # 录制文件体检（离线，不依赖 ROS 图）
@@ -140,7 +142,9 @@ ros2 run rus_sim_recorder rus_sim_recorder_inspect records/run_*.rusrec --check-
 ```
 
 `rus_sim.launch.py` 只是用 `IncludeLaunchDescription` 组合上面四个 launch（`src/rus_sim_bringup/launch/rus_sim.launch.py`）；
-录制默认**不打开**：`record:=true` 才把 `rus_sim_recorder/launch/recorder.launch.py` 一并拉起。
+录制默认**不打开**：`record:=true` 才把 `rus_sim_recorder/launch/recorder.launch.py` 一并拉起
+（拉起后默认**启动即录**；`record_autostart:=false` 则起来处于待命，等前端 `recorder_start`，
+见 `WsProtocol.md` §4.8）。
 记录文件格式见 `docs/Protocol/RecFormat.md`。
 
 ---
@@ -514,6 +518,7 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | 参数 | 类型 | 默认值 | 文件值 | 说明 |
 |------|------|--------|--------|------|
 | `enabled` | bool | true | true | false = 不订阅、不落盘（只留一行日志） |
+| `autostart` | bool | true | true | **启动即录**；false = 起来处于待命（`state=0`），等 `/recorder/command` 的 `recorder_start` |
 | `output_dir` | string | `records` | `records` | 输出目录（相对路径按启动工作目录解析，不存在则创建；日志打印绝对路径） |
 | `file_prefix` | string | `run` | `run` | 文件名 `<prefix>_<时间戳>.rusrec`；滚动加 `_p001/_p002` |
 | `max_file_size_mb` | int | 512 | 512 | 单文件上限，超出即封存（写尾索引）并滚动；0 = 不限 |
@@ -528,6 +533,38 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | `record_sensor` | bool | true | true | 通道 1 开关 |
 | `sensor_topic` | string | `/sensor/pointcloud` | 同左 | 通道 1 来源 |
 | `sensor_max_rate_hz` | double | 0.0 | 0.0 | 通道 1 写入限流（0 = 不限） |
+
+> 运行期开关：服务 `/recorder/command` 的 `recorder_start` / `recorder_stop` / `recorder_status`
+> （协议见 `docs/Protocol/WsProtocol.md` §4.8，文件口径见 `RecFormat.md` §7.5）。
+> 路由在 bridge `command_dispatcher.cpp::init_routing()` 注册为 `{Module::RECORDER}`，
+> **不随 `set_mode` 切换**；`recorder_stop` 会**排空队列**再写尾索引，`recorder_start`
+> 一律打开新文件（`_pNNN` 递增，绝不覆盖）。默认 `autostart=true` 时行为与历史版本一致。
+
+### 8.6 `replayer_node`（`config/replayer_params.yaml`）
+
+> 回放：把 `.rusrec` 按时间轴重发回录制时的话题。协议指令见 `docs/Protocol/WsProtocol.md` §4.7，
+> 时间轴口径见 `docs/Protocol/RecFormat.md` §7.4。
+
+| 参数 | 类型 | 默认值 | 文件值 | 说明 |
+|------|------|--------|--------|------|
+| `record_dir` | string | `records` | `records` | 录音目录（与 recorder 的 `output_dir` 指向同一目录即可直接回放） |
+| `file_path` | string | `""` | `""` | 直接指定录音文件（非空时并入清单第 0 项，忽略 `file_index`） |
+| `file_prefix` | string | `""` | `""` | 目录过滤前缀（`""` = 全部 `*.rusrec`；recorder 默认前缀是 `run`） |
+| `file_index` | int | 0 | 0 | `file_path` 为空时：目录内按文件名升序的第 N 个（文件名含时间戳 → 即时间顺序） |
+| `autoload` | bool | true | true | 启动即载入（失败只告警、不退出，可用 `replay_load` 显式载入） |
+| `autoplay` | bool | false | false | 载入后立即播放（false = 停在起点，等 `replay_start`） |
+| `loop` | bool | false | false | 播完循环（true 时不进入 finished、不发 `replay_done`） |
+| `speed` | double | 1.0 | 1.0 | 初始倍速（钳位到 0.05 ~ 20） |
+| `check_crc` | bool | true | true | 发布前逐条校验 payload CRC32（失败即停 + `error` 事件） |
+| `use_recv_time` | bool | false | false | 时间轴基准：false = 消息时间戳 `stamp`；true = 录制入队时刻 `recv` |
+| `topic_prefix` | string | `""` | `""` | 发布话题前缀（`""` = 原样发回录制时话题；与真机共存时用 `/replay` 隔离） |
+| `qos_depth` | int | 10 | 10 | 发布队列深度（与 driver / perception 的发布端一致） |
+| `qos_transient_local` | bool | true | true | reliable + transient_local（bridge 对 `/sensor/pointcloud` 的订阅要求，否则收不到） |
+| `log_period_sec` | double | 5.0 | 5.0 | 回放统计日志周期（已发条数 / 速率 / 进度 / 倍速 / 失败数） |
+
+> 服务名 `/replayer/command` 由协议层 `module_service_name(Module::REPLAYER)` 决定
+> （`rus_sim_utils/command_registry.hpp`），路由注册在 bridge `command_dispatcher.cpp::init_routing()`：
+> 10 条 `replay_*` 全部 `{Module::REPLAYER}`，**不随 `set_mode` 切换**。
 
 ---
 
@@ -631,14 +668,18 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 
 | 文件 | 内容 |
 |------|------|
-| `recorder_node.{hpp,cpp}` | 节点：双路订阅（`/driver/state` + `/sensor/pointcloud`）→ CDR 序列化 → 有界队列 → 独立写线程（flush / 超限滚动 / 封存写尾索引）；参数与统计日志 |
+| `recorder_node.{hpp,cpp}` | 节点：双路订阅（`/driver/state` + `/sensor/pointcloud`）→ CDR 序列化 → 有界队列 → 独立写线程（flush / 超限滚动 / 封存写尾索引）；运行期开关 `/recorder/command`（`recorder_start` / `recorder_stop` / `recorder_status`，`Module::RECORDER`）；参数与统计日志 |
 | `include/components/` | `rec_format.hpp`（格式常量 + 结构体 + `static_assert` 尺寸自校验）、`crc32.hpp`（IEEE CRC32，constexpr 查表）、`bin_writer.hpp`（小端缓冲写入器）—— **纯 header / 零 ROS 依赖** |
 | `include/storage/` + `src/storage/` | `rec_writer`（`.rusrec` 写：头 + 通道表 + 记录 + 尾索引 + Footer）、`rec_reader`（尾索引读取 / 顺序扫描 / CRC 校验 / 随机定位）—— **纯 std，零 ROS 依赖** |
 | `src/tools/recorder_inspect.cpp` | 离线体检 CLI（`--scan` / `--check-crc` / `--dump N` / `--json`），退出码区分"完好 / 打不开 / 有问题" |
+| `include/rus_sim_replayer/` + `src/rus_sim_replayer/` | `replay_node`（回放节点：时间轴载入 → 独立回放线程按点发布 → 泛型发布器原样重发；`/replayer/command` 的 10 条 `replay_*` 指令） |
+| `src/replay_main.cpp` | 回放节点入口（可执行 `rus_sim_recorder_replay`） |
 | `config/recorder_params.yaml` + `launch/recorder.launch.py` | 参数与启动（§8.5） |
+| `config/replayer_params.yaml` + `launch/replayer.launch.py` | 回放参数与启动（§8.6） |
 
 > 分层与 perception 一致（`components/` 基元、`storage/` 领域逻辑、节点只做通信与调度）；
-> 记录文件的二进制格式见 `docs/Protocol/RecFormat.md`（含字段级偏移表、崩溃恢复流程、容量估算）。
+> 记录文件的二进制格式见 `docs/Protocol/RecFormat.md`（含字段级偏移表、崩溃恢复流程、回放时间轴、容量估算）。
+> 回放与录制**共用同一个 storage 层**（`BuildTimeline` + `ReadRecordAt`），协议指令见 `WsProtocol.md` §4.7。
 
 ---
 
@@ -691,12 +732,23 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 5. **坐标语义**：`set_start_pose` / `set_end_pose` 注释为「法兰系」，而 driver 的 `movel` / `servo_cart` 目标为 **TCP**；planning 送入插值器的状态取 `tool_pose`（TCP）。规范里必须明确一条链上的坐标系约定。
 6. **文档结构定稿**：`docs/DevelopmentGuide.md`（规范 + 契约总入口）→ `docs/Protocol/WsProtocol.md`（前端协议细则）→ `docs/<pkg>/<pkg>.md`（按 `DocExample.md` 模板生成 7 个包文档）。
 7. **本稿合入方式**：评审通过后，把 §1–§10 作为 `DevelopmentGuide.md` 正式内容；§11 转为「文档维护清单」或拆分 issue 消项。
-8. **记录文件的离线回放**：`rus_sim_recorder` 已能录 + 校验（`rus_sim_recorder_inspect`），
-   但**还不能回放**。下一步建议做 `rus_sim_recorder_replay`：按 `.rusrec` 的时间轴把
-   通道 0/1 重新发布回 `/driver/state`、`/sensor/pointcloud`（`RecReader::ReadAt` 已支持
-   按尾索引随机定位 + 校验），用于无设备复现问题与前端联调。
-   需先定的两个口径：**是否按原时间戳重发 / 是否支持倍速与暂停**、**与真机驱动同时在线的冲突处理**
-   （回放的 `/driver/state` 会与真驱动撞话题，须用 `--ros-args -r` 重映射或先停驱动）。
+8. ✅ **记录文件的离线回放**（已落地）：`rus_sim_recorder_replay`（节点 `replayer_node`，服务 `/replayer/command`）
+   按 `.rusrec` 的时间轴把通道 0/1 重新发布回 `/driver/state`、`/sensor/pointcloud`（bridge 会照常推到前端
+   `/state` / `/sensor`，即"前端回放可视化"）。两条口径已定并写进 `RecFormat.md` §7.4 / `WsProtocol.md` §4.7：
+   - **时间戳与原字节**：**不重打时间戳、不改 payload**（前端解析路径与实时完全一致）；时间轴基准由参数
+     `time_source` 选 `stamp`（消息时间戳）/ `recv`（录制入队时刻）；**支持倍速（0.05~20）与暂停/恢复/seek/单步**。
+   - **与真机共存**：默认原样发回录制时话题（会撞真驱动）→ 先停驱动，或用参数 `topic_prefix` 隔离
+     （`/replay` → `/replay/driver/state`）；节点启动时会对空前缀打告警。
+   实现要点：`RecReader::BuildTimeline()`（顺序扫描只收元数据，payload 不驻留内存）+ `ReadRecordAt(offset)`
+   （发布前读回 + CRC 二次校验）+ 泛型发布器原样重发；**崩溃 / 截断录音（无尾索引）同样可回放**。
+   协议层为此新增了 10 条 `replay_*` 指令（`Module::REPLAYER` → `/replayer/command`）与 reply/event 的
+   **`strings` 文本结果字段**（`CommandService.srv::Response.strings`），见 `WsProtocol.md` §3.1 / §4.7。
+9. ✅ **录制运行期开关**（已落地）：`recorder_node` 的写线程改为**常驻**，"是否落盘"由期望状态驱动，
+   新增服务 `/recorder/command`（3 条 `recorder_*`：`recorder_start` / `recorder_stop` /
+   `recorder_status`，`Module::RECORDER`）与参数 `autostart`（默认 true = 启动即录，**向后兼容**）。
+   口径：`recorder_stop` 先**排空队列**再写尾索引（回执返回即文件完好）；`recorder_start` 一律
+   打开新文件（`_pNNN` 递增，**绝不覆盖**）；停录期间消息不入队、不计 `dropped`；写失败即熔断
+   （`state=2`，需重启节点）。协议见 `WsProtocol.md` §4.8、文件口径见 `RecFormat.md` §7.5。
 
 ---
 

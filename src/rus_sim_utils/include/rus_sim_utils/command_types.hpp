@@ -256,6 +256,109 @@ namespace RusUtils {
             static constexpr std::string_view kName = CmdName::kGetFrameRate;
         };
 
+        // ────────────────────────────────────────────────────────────
+        //  回放指令（rus_sim_recorder_replay；路由到 Module::REPLAYER）
+        //  单位 / 编码口径见 docs/Protocol/WsProtocol.md §4.7
+        // ────────────────────────────────────────────────────────────
+
+        /// 载入待回放文件：args = [目录清单序号?]（缺省 = 保持当前序号）
+        struct ReplayLoad {
+            static constexpr std::string_view kName = CmdName::kReplayLoad;
+            double index = 0;
+            static bool ParseArgs(const std::vector<double>& a, ReplayLoad& o) {
+                if (a.size() > 1) return false;
+                if (!a.empty()) o.index = a[0];
+                return true;
+            }
+        };
+
+        /// 列出录音清单（result = [文件数, 当前序号]；文件名在 reply.message 里）
+        struct ReplayList {
+            static constexpr std::string_view kName = CmdName::kReplayList;
+        };
+
+        /// 开始播放：args = [倍速?]（缺省 = 当前倍速；0.05 ~ 20，越界钳位）
+        struct ReplayStart {
+            static constexpr std::string_view kName = CmdName::kReplayStart;
+            double speed = 0.0;   // 0 = 不改，沿用当前倍速
+            static bool ParseArgs(const std::vector<double>& a, ReplayStart& o) {
+                if (a.size() > 1) return false;
+                if (!a.empty()) o.speed = a[0];
+                return true;
+            }
+        };
+
+        struct ReplayPause {
+            static constexpr std::string_view kName = CmdName::kReplayPause;
+        };
+
+        struct ReplayResume {
+            static constexpr std::string_view kName = CmdName::kReplayResume;
+        };
+
+        /// 停止并复位到起点（保留已载入文件，可直接再 start）
+        struct ReplayStop {
+            static constexpr std::string_view kName = CmdName::kReplayStop;
+        };
+
+        /// 跳转：args = [t_s]（相对文件起点，按时间轴定位到第一条 ≥ t 的记录）
+        struct ReplaySeek {
+            static constexpr std::string_view kName = CmdName::kReplaySeek;
+            double t = 0.0;
+            static bool ParseArgs(const std::vector<double>& a, ReplaySeek& o) {
+                if (a.size() != 1) return false;
+                o.t = a[0];
+                return true;
+            }
+        };
+
+        /// 设置倍速：args = [speed]（0.05 ~ 20）
+        struct ReplaySetSpeed {
+            static constexpr std::string_view kName = CmdName::kReplaySetSpeed;
+            double speed = 1.0;
+            static bool ParseArgs(const std::vector<double>& a, ReplaySetSpeed& o) {
+                if (a.size() != 1) return false;
+                o.speed = a[0];
+                return true;
+            }
+        };
+
+        /// 单步：args = [n?]（暂停 / 空闲态下顺序发布 n 条，缺省 1）
+        struct ReplayStep {
+            static constexpr std::string_view kName = CmdName::kReplayStep;
+            double count = 1;
+            static bool ParseArgs(const std::vector<double>& a, ReplayStep& o) {
+                if (a.size() > 1) return false;
+                if (!a.empty()) o.count = a[0];
+                return true;
+            }
+        };
+
+        /// 查询回放状态：result = [state, 进度s, 时长s, 倍速, 游标, 记录数, 已载入, 文件序号, 文件数]
+        struct ReplayStatus {
+            static constexpr std::string_view kName = CmdName::kReplayStatus;
+        };
+
+        // ════════════════════════════════════════════════════════════
+        //  录制控制（recorder_node；服务 /recorder/command）
+        //  节点默认启动即录（参数 autostart），这三条用于运行期开关落盘。
+        // ════════════════════════════════════════════════════════════
+
+        /// 开始录制（失败＝已在录制 / 不可用：未启用、无通道、写失败熔断）
+        struct RecorderStart {
+            static constexpr std::string_view kName = CmdName::kRecorderStart;
+        };
+
+        /// 停止录制：把已入队数据写完 → 封存（写尾索引）→ 停录（文件保留，可再 start）
+        struct RecorderStop {
+            static constexpr std::string_view kName = CmdName::kRecorderStop;
+        };
+
+        /// 查询录制状态：result = [state, 记录数, payload MiB, 当前文件 MiB, 丢弃, 限流, 文件数]
+        struct RecorderStatus {
+            static constexpr std::string_view kName = CmdName::kRecorderStatus;
+        };
+
         // ════════════════════════════════════════════════════════════
         //  指令类型清单（唯一真源：所有指令类型的并集）
         //  查找表由本清单编译期自动展开生成，加新指令只改这里。
@@ -271,7 +374,10 @@ namespace RusUtils {
             StopJogDecel, StopJogImmediate, ServoStart, ServoEnd,
             Disconnect, IsConnected, IsInDragTeach, RobotEnable,
             GetState, IsMotionDone, RunFile, SwitchDriver, GetDriverType,
-            SetTimeSpeed, GetTimeSpeed, GetSimTime, StepOnce, GetFrameRate>;
+            SetTimeSpeed, GetTimeSpeed, GetSimTime, StepOnce, GetFrameRate,
+            ReplayLoad, ReplayList, ReplayStart, ReplayPause, ReplayResume,
+            ReplayStop, ReplaySeek, ReplaySetSpeed, ReplayStep, ReplayStatus,
+            RecorderStart, RecorderStop, RecorderStatus>;
 
         // ────────────────────────────────────────────────────────────
         //  解析：指令名 + args → 类型化结构体

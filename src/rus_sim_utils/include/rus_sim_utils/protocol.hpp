@@ -69,23 +69,27 @@ namespace RusUtils {
         std::string event;            // 事件名（仅 Event，见 EventName 命名空间）
         bool success = false;         // 是否成功
         std::string message;          // 错误描述 / 附加说明（成功可为空）
-        std::vector<double> result;   // 处理结果（查询类带数据，操作类为空）
+        std::vector<double> result;   // 数值结果（查询类带数据，操作类为空）
+        std::vector<std::string> strings;  // 文本结果（查询类；如录音文件清单 / 当前文件名）
 
         static ResultMessage MakeReply(uint32_t id, bool ok,
                                        std::string msg,
-                                       std::vector<double> res = {}) {
+                                       std::vector<double> res = {},
+                                       std::vector<std::string> strs = {}) {
             ResultMessage r;
             r.kind = Kind::Reply;
             r.id = id;
             r.success = ok;
             r.message = std::move(msg);
             r.result = std::move(res);
+            r.strings = std::move(strs);
             return r;
         }
 
         static ResultMessage MakeEvent(std::string evt, uint32_t ack_id, bool ok,
                                        std::string msg = {},
-                                       std::vector<double> res = {}) {
+                                       std::vector<double> res = {},
+                                       std::vector<std::string> strs = {}) {
             ResultMessage r;
             r.kind = Kind::Event;
             r.event = std::move(evt);
@@ -93,6 +97,7 @@ namespace RusUtils {
             r.success = ok;
             r.message = std::move(msg);
             r.result = std::move(res);
+            r.strings = std::move(strs);
             return r;
         }
     };
@@ -176,6 +181,17 @@ namespace RusUtils {
             for (size_t i = 0; i < v.size(); ++i) {
                 if (i) s += ",";
                 s += dtoa(v[i]);
+            }
+            s += "]";
+            return s;
+        }
+
+        /// 字符串数组 → JSON（元素逐个转义；与 arr_to_json 对称）
+        inline std::string str_arr_to_json(const std::vector<std::string>& v) {
+            std::string s = "[";
+            for (size_t i = 0; i < v.size(); ++i) {
+                if (i) s += ",";
+                s += "\"" + json_escape(v[i]) + "\"";
             }
             s += "]";
             return s;
@@ -275,7 +291,8 @@ namespace RusUtils {
         }
         s += ",\"success\":" + std::string(r.success ? "true" : "false") +
              ",\"message\":\"" + detail::json_escape(r.message) + "\"" +
-             ",\"result\":" + detail::arr_to_json(r.result) + "}";
+             ",\"result\":" + detail::arr_to_json(r.result) +
+             ",\"strings\":" + detail::str_arr_to_json(r.strings) + "}";
         return s;
     }
 

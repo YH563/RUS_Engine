@@ -179,6 +179,86 @@ ros2 run rus_sim_recorder rus_sim_recorder_inspect <file.rusrec> --dump 5 --json
 
 退出码：`0` 完好 / `1` 打不开或头部非法 / `2` 能读但有问题（CRC 失败、截断、索引不一致）。
 
+录制开关（运行期开 / 关落盘，§7.5）：
+
+```bash
+ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_status}"
+```
+
+回放（把录音按时间轴重发回话题，§7.4）：
+
+```bash
+ros2 launch rus_sim_recorder replayer.launch.py                    # 载入 records/ 里第 0 个，等 replay_start
+ros2 launch rus_sim_recorder replayer.launch.py autoplay:=true     # 启动即播
+ros2 launch rus_sim_recorder replayer.launch.py topic_prefix:=/replay   # 与真机共存（话题隔离）
+# 前端/命令行控制：replay_list / replay_load / replay_start / pause / resume / stop / seek / status
+ros2 service call /replayer/command rus_sim_interfaces/srv/CommandService "{command: replay_status}"
+```
+
+### 7.4 回放（`rus_sim_recorder_replay`）
+
+回放把"**什么时候发哪条记录**"与"**这条记录的 payload**"分成两件事：
+
+```text
+载入：Open()（读 FileHeader / 通道表；有尾索引则顺手读索引）
+  → BuildTimeline()：从记录流起点顺序扫描，只读 40 B 记录头，payload 用 seek 跳过（不读内容）
+      → [offset, channel, seq, stamp_ns, recv_ns, payload_size, crc] × N
+  → 按通道表建泛型发布器（话题名 / 类型名都来自录音的 ChannelDesc）
+
+回放：睡到时间轴上的点 → ReadRecordAt(offset)（读回 payload + 可选 CRC 校验）→ 原样重发
+```
+
+要点：
+
+- **有尾索引与无尾索引（崩溃 / 截断）都能回放**：时间轴来自顺序扫描，不依赖 `IndexEntry`；
+  有索引时若索引条数与扫描结果不一致，告警并以扫描结果为准（索引仍是 inspect 体检的随机访问路径）。
+- **时间轴基准**（`replayer_node` 参数 `time_source`）：
+  - `stamp`（默认）：`RecHeader.stamp_ns`（消息时间戳）——复现驱动当时的时基；
+  - `recv`：`RecHeader.recv_ns`（录制入队时刻）——复现录制端的实际到达节奏。
+  - 首条平移到 0（进度以文件起点计）；时间戳回退（`map_clear` 复位 / 通道交错）**钳到前一条**，
+    保证倍速播放不倒流；`stamp_ns == 0`（消息未带时间戳）时回退用 `recv_ns`。
+- **payload 不驻留内存**：时间轴只有元数据（每条 ≈ 32 B），长录音也不会把 GB 级 payload 读进内存；
+  发布前一刻才按 `offset` 读回并做 CRC 二次校验（`check_crc` 默认开）。
+- **发布方式**：泛型发布器（`rclcpp::GenericPublisher`）+ 录制时的 CDR 字节**原样重发**，
+  不反序列化、不重打时间戳 → 订阅端看到的字节与录制时一致；`transient_local` 默认开，
+  与 bridge 对 `/sensor/pointcloud` 的订阅要求一致（否则 DDS 不建立通路）。
+- **失败处理**：读回 / CRC 失败 → 停止回放并广播 `error` 事件（绝不继续发坏数据）；
+  "最后一条写了一半"的记录不进时间轴（扫描在截断处收住，日志给出 `payload 截断 @offset`）。
+- **与真机共存**：默认按录制时的话题原样发布，真驱动在线会撞话题 → 先停驱动，
+  或用参数 `topic_prefix` 隔离（`/replay` → `/replay/driver/state`）。
+
+### 7.5 录制开关（`/recorder/command`）
+
+录制默认**启动即录**（参数 `autostart=true`），也可由外部指令在运行期开关
+（协议细节见 `docs/Protocol/WsProtocol.md` §4.8）：
+
+```bash
+ros2 launch rus_sim_recorder recorder.launch.py autostart:=false    # 起来待命，等指令
+ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_start}"
+ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_status}"
+ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_stop}"
+```
+
+三条指令都无参；回执 `result` = `[state, 记录数, payload MiB, 当前文件 MiB, 丢弃, 限流, 文件数]`，
+`strings` = 当前 / 最后封存的文件名。
+
+| `state` | 含义 |
+|---------|------|
+| 0 | `stopped`：未录制（可再 `recorder_start`） |
+| 1 | `recording`：录制中 |
+| 2 | `failed`：写失败熔断（需检查磁盘后重启节点） |
+
+要点：
+
+- **stop 会排空队列**：先把已入队的记录写完，再写尾索引 + Footer（回执返回即代表文件完好，
+  可直接 `recorder_inspect` 体检 / `rus_sim_recorder_replay` 回放），**不丢已入队数据**。
+- **每次 start 都是新文件**：文件名 `<prefix>_<时间戳>_pNNN.rusrec`（本次运行第一个文件无
+  `_pNNN`），因此 stop→start 不会截断 / 覆盖上一次录音；时间戳取自**节点启动时刻**，序号递增。
+- **停录期间**：订阅仍在收，但消息不入队（静默丢弃，不计入 `dropped` —— 那是异常丢数据的计数）；
+  再次 `recorder_start` 从当前时刻继续，中间空档不补。
+- **写失败（磁盘满等）**：节点熔断（停录 + ERROR 日志），`state=2`；已写内容仍可用
+  `inspect --scan` 抢救，之后需重启节点（`ready_` 不复位）。
+
 ---
 
 ## 8. 容量估算（实测值）

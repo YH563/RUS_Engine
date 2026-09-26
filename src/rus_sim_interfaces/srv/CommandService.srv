@@ -5,3 +5,6 @@ float64[] args
 bool success
 string message
 float64[] result
+# 文本结果（查询类指令：如回放的录音文件清单 / 当前文件名）；
+# 数值结果放 result，文本放这里 —— bridge 原样透传到前端 reply.strings
+string[] strings

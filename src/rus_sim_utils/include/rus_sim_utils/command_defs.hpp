@@ -75,6 +75,26 @@ namespace RusUtils {
         inline constexpr std::string_view kSetToolIndex      = "set_tool_index";
         inline constexpr std::string_view kGetToolCoords     = "get_tool_coords";
 
+        // ── 回放（rus_sim_recorder_replay：按 .rusrec 时间轴把录音重发回话题）──
+        //   时间轴口径 / 状态编码见 docs/Protocol/WsProtocol.md §4.7
+        inline constexpr std::string_view kReplayLoad     = "replay_load";
+        inline constexpr std::string_view kReplayList     = "replay_list";
+        inline constexpr std::string_view kReplayStart    = "replay_start";
+        inline constexpr std::string_view kReplayPause    = "replay_pause";
+        inline constexpr std::string_view kReplayResume   = "replay_resume";
+        inline constexpr std::string_view kReplayStop     = "replay_stop";
+        inline constexpr std::string_view kReplaySeek     = "replay_seek";
+        inline constexpr std::string_view kReplaySetSpeed = "replay_set_speed";
+        inline constexpr std::string_view kReplayStep     = "replay_step";
+        inline constexpr std::string_view kReplayStatus   = "replay_status";
+
+        // ── 录制控制（recorder_node：外部控制开始 / 结束 / 查询落盘状态）──
+        //   节点默认启动即录（autostart=true），这三条用于运行期开关录制；
+        //   状态编码 / result 字段见 docs/Protocol/WsProtocol.md §4.8
+        inline constexpr std::string_view kRecorderStart  = "recorder_start";
+        inline constexpr std::string_view kRecorderStop   = "recorder_stop";
+        inline constexpr std::string_view kRecorderStatus = "recorder_status";
+
         // 感知控制指令：通道已预留（WsPath::kSensor），指令待后续设计，暂不定义
     }
 
@@ -84,6 +104,7 @@ namespace RusUtils {
         inline constexpr std::string_view kPlanDone    = "plan_done";
         inline constexpr std::string_view kScanDone    = "scan_done";
         inline constexpr std::string_view kMotionDone  = "motion_done";
+        inline constexpr std::string_view kReplayDone  = "replay_done";  // 回放播到末尾（非 loop）
         inline constexpr std::string_view kError       = "error";
     }
 

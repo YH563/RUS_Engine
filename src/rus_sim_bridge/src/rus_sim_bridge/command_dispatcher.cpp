@@ -79,6 +79,25 @@ namespace rus_sim_bridge {
         registry_.Register(CmdName::kReset,           {Module::PLANNING});
         registry_.Register(CmdName::kQueryMotionDone, {Module::PLANNING});
 
+        // ── 回放（rus_sim_recorder_replay：离线复盘，与在线链路无耦合）──
+        // 全部直达 replayer；不参与模式切换（手动/自动与回放无关）。
+        registry_.Register(CmdName::kReplayLoad,     {Module::REPLAYER});
+        registry_.Register(CmdName::kReplayList,     {Module::REPLAYER});
+        registry_.Register(CmdName::kReplayStart,    {Module::REPLAYER});
+        registry_.Register(CmdName::kReplayPause,    {Module::REPLAYER});
+        registry_.Register(CmdName::kReplayResume,   {Module::REPLAYER});
+        registry_.Register(CmdName::kReplayStop,     {Module::REPLAYER});
+        registry_.Register(CmdName::kReplaySeek,     {Module::REPLAYER});
+        registry_.Register(CmdName::kReplaySetSpeed, {Module::REPLAYER});
+        registry_.Register(CmdName::kReplayStep,     {Module::REPLAYER});
+        registry_.Register(CmdName::kReplayStatus,   {Module::REPLAYER});
+
+        // ── 录制控制（recorder_node：运行期开 / 关落盘）──
+        // 同样直达、不参与模式切换（录制与手动/自动无关）。
+        registry_.Register(CmdName::kRecorderStart,  {Module::RECORDER});
+        registry_.Register(CmdName::kRecorderStop,   {Module::RECORDER});
+        registry_.Register(CmdName::kRecorderStatus, {Module::RECORDER});
+
         // ── 本地处理（不转发下游） ──
         registry_.Register(CmdName::kShutdown, {});
         registry_.Register(CmdName::kSetMode, {});   // 模式切换：0=手动, 1=自动（修改上述扇出目标）
@@ -238,34 +257,38 @@ namespace rus_sim_bridge {
                 bool success = false;
                 std::string message;
                 std::vector<double> result;
+                std::vector<std::string> strings;
                 try {
                     auto res = future.get();
                     success = res->success;
                     message = res->message;
                     result = res->result;
+                    strings = res->strings;
                 } catch (const std::exception& e) {
                     message = std::string("service exception: ") + e.what();
                 }
-                finish_fanout(ctx, success, message, std::move(result));
+                finish_fanout(ctx, success, message, std::move(result), std::move(strings));
             });
     }
 
     void CommandDispatcher::finish_fanout(const std::shared_ptr<FanOutContext>& ctx,
                                           bool success, const std::string& message,
-                                          std::vector<double> result) {
+                                          std::vector<double> result,
+                                          std::vector<std::string> strings) {
         if (ctx->done) return;
         if (!success) {
             ctx->all_success = false;
             if (ctx->message.empty()) ctx->message = message;
         }
-        // 成功路径：各模块返回结果依次拼接
+        // 成功路径：各模块返回结果依次拼接（数值 + 文本）
         for (double v : result) ctx->result.push_back(v);
+        for (auto& s : strings) ctx->strings.push_back(std::move(s));
 
         --ctx->pending;
         if (ctx->pending == 0) {
             ctx->done = true;
             auto reply = RusUtils::ResultMessage::MakeReply(ctx->request_id, ctx->all_success,
-                ctx->message.empty() ? "ok" : ctx->message, ctx->result);
+                ctx->message.empty() ? "ok" : ctx->message, ctx->result, ctx->strings);
             ctx->reply(RusUtils::SerializeResult(reply));
         }
     }

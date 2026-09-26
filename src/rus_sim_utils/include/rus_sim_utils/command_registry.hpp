@@ -26,6 +26,8 @@ namespace RusUtils {
         PLANNING,    // 运动规划 / 执行
         DRIVER,      // 驱动
         PERCEPTION,  // 感知（点云 / 图像）
+        REPLAYER,    // 离线回放（rus_sim_recorder_replay：按 .rusrec 时间轴重发话题）
+        RECORDER,    // 录制（rus_sim_recorder_node：运行期开 / 关落盘）
     };
 
     /// 模块 → 下游 CommandService 服务名
@@ -34,6 +36,8 @@ namespace RusUtils {
             case Module::PLANNING:   return "/planning/command";
             case Module::DRIVER:     return "/driver/command";
             case Module::PERCEPTION: return "/perception/command";
+            case Module::REPLAYER:   return "/replayer/command";
+            case Module::RECORDER:   return "/recorder/command";
         }
         return "";
     }
@@ -44,6 +48,8 @@ namespace RusUtils {
             case Module::PLANNING:   return "planning";
             case Module::DRIVER:     return "driver";
             case Module::PERCEPTION: return "perception";
+            case Module::REPLAYER:   return "replayer";
+            case Module::RECORDER:   return "recorder";
         }
         return "?";
     }

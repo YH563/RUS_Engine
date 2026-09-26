@@ -12,6 +12,7 @@
   ros2 launch rus_sim_bringup rus_sim.launch.py
   ros2 launch rus_sim_bringup rus_sim.launch.py record:=true              # 同时录制
   ros2 launch rus_sim_bringup rus_sim.launch.py record:=true record_dir:=/data/run01
+  ros2 launch rus_sim_bringup rus_sim.launch.py record:=true record_autostart:=false  # 起来不录，等 recorder_start
   ros2 launch rus_sim_bringup rus_sim.launch.py load_test_cloud:=false    # 不加载联调测试点云
 """
 import os
@@ -57,6 +58,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'record_dir', default_value='records',
             description='录制输出目录（相对路径按启动工作目录解析）'),
+        DeclareLaunchArgument(
+            'record_autostart', default_value='true',
+            description='录制是否启动即开始（false = 起来待命，由前端 recorder_start 开始）'),
         # 联调测试点云开关（透传给感知层）：默认【不加载】。
         # 该点云是 rus_sim_gen_test_cloud 生成的合成起伏面（0.5×0.6m、12221 点），
         # 会作为地图种子永久留在地图里、并混进前端 /sensor 通路，造成"散乱点"观感。
@@ -88,9 +92,13 @@ def generate_launch_description():
             }.items(),
         ),
         # 记录层（可选）：/driver/state + /sensor/pointcloud → <record_dir>/*.rusrec
+        # 运行期可用 /recorder/command 的 recorder_start / recorder_stop 开关（见 WsProtocol.md §4.8）
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(recorder_launch),
-            launch_arguments={'output_dir': LaunchConfiguration('record_dir')}.items(),
+            launch_arguments={
+                'output_dir': LaunchConfiguration('record_dir'),
+                'autostart': LaunchConfiguration('record_autostart'),
+            }.items(),
             condition=IfCondition(LaunchConfiguration('record')),
         ),
     ])

@@ -12,9 +12,19 @@
 //    写线程（独立线程）      出队 → CRC32 → 写缓冲 → 定期 flush / 超限滚动新文件
 //    ⇒ 回调绝不碰磁盘：录制不拖慢发布端；队列满则丢新并计数（宁可丢，不阻塞）
 //
+//  录制开关（运行期可控）：
+//    默认 autostart=true → 进程一起来就录（等价于收到一次 recorder_start）；
+//    autostart=false 时起来处于 stopped，由外部指令开始（见下）。
+//    /recorder/command（bridge 路由目标 Module::RECORDER，协议见 WsProtocol.md §4.8）：
+//      recorder_start   开始录制（新文件；已在录制 / 不可用 → 失败）
+//      recorder_stop    停录：把已入队数据写完 → 封存（写尾索引），文件保留可再 start
+//      recorder_status  查询状态（result 7 项 + strings=[当前 / 最后文件名]）
+//    ⇒ 写线程常驻，"是否落盘" 由 recording_ 期望状态驱动：回调在停录期间不入队
+//      （静默丢弃，不计入 dropped —— 那是"异常丢数据"的计数）。
+//
 //  落盘（格式见 docs/Protocol/RecFormat.md）：
 //    records/run_<时间戳>.rusrec           单文件：[FileHeader][通道表][记录…][尾索引][Footer]
-//    records/run_<时间戳>_p002.rusrec      超过 max_file_size_mb 后滚动
+//    records/run_<时间戳>_p002.rusrec      超过 max_file_size_mb 后滚动；stop→start 也换新文件
 //  正常关闭（含 Ctrl-C）写尾索引；进程被强杀的文件无尾索引，仍可顺序扫描读回。
 // ════════════════════════════════════════════════════════════════════
 
@@ -34,6 +44,7 @@
 
 #include <rus_sim_interfaces/msg/robot_state.hpp>
 #include <rus_sim_interfaces/msg/sensor_frame.hpp>
+#include <rus_sim_interfaces/srv/command_service.hpp>
 
 #include "components/rec_format.hpp"
 #include "storage/rec_writer.hpp"
@@ -49,7 +60,15 @@ namespace RusRecorder {
         RecorderNode();
         ~RecorderNode() override;  // 停写线程 → 排空队列 → 写尾索引（Ctrl-C 也走这里）
 
+        /// 对外录制状态编码（`recorder_status.result[0]`，协议见 WsProtocol.md §4.8）
+        enum class State : int {
+            kStopped = 0,    // 未录制（未启动 / 已 recorder_stop）
+            kRecording = 1,  // 录制中
+            kFailed = 2,     // 写失败熔断（需检查磁盘后重启节点）
+        };
+
     private:
+        using CommandService = rus_sim_interfaces::srv::CommandService;
         // 通道号（写入文件头通道表，离线工具据此解释 payload）
         static constexpr uint16_t kChannelState = 0;
         static constexpr uint16_t kChannelSensor = 1;
@@ -72,12 +91,26 @@ namespace RusRecorder {
 
         // ── 写线程（独占 RecWriter）──
         void writer_loop();
-        bool open_output_file(bool first);
-        void close_output_file();
+        /// 打开输出文件（plain_name=true 不加滚动序号后缀；失败置 write_failed_）
+        bool open_output_file(bool plain_name);
+        /// 封存当前文件（写尾索引）；err 非空时回填失败原因。返回是否成功
+        bool close_output_file(std::string* err = nullptr);
         void log_stats();
+
+        // ── 指令（/recorder/command：运行期开 / 关落盘，见 WsProtocol.md §4.8）──
+        void handle_command(const std::shared_ptr<rmw_request_id_t> req_header,
+                            const std::shared_ptr<CommandService::Request> req,
+                            std::shared_ptr<CommandService::Response> res);
+        /// 请求写线程切换到目标录制状态并等它完成（成功返回 true，失败说明写入 err）
+        bool request_recording(bool on, std::string* err);
+        /// 状态快照（result 7 项；顺序是协议的一部分，见 WsProtocol.md §4.8）
+        std::vector<double> status_snapshot() const;
+        /// 写线程完成一次开 / 封后回填结果并唤醒等待中的 service 线程
+        void finish_state_change(const std::string& err, const std::string& file_path);
 
         // ── 参数 ──
         bool enabled_ = true;              // false = 不订阅不落盘（进程空转）
+        bool autostart_ = true;            // true = 启动即录；false = 起来处于 stopped，等 recorder_start
         std::string output_dir_;           // 输出目录（相对路径按工作目录解析）
         std::string file_prefix_;          // 文件名前缀
         uint64_t max_file_size_bytes_ = 0; // 单文件上限（0 = 不限）
@@ -112,10 +145,26 @@ namespace RusRecorder {
         std::thread writer_thread_;
         Storage::RecWriter writer_;
         std::string run_stamp_;   // 本次运行时间戳（文件名）
-        uint32_t roll_index_ = 0; // 滚动序号
+        uint32_t roll_index_ = 0; // 滚动序号（文件名 _pNNN 后缀；0 = 本次运行第一个文件）
         bool file_active_ = false;
 
+        // ── 录制开关（外部控制：service 线程 ↔ 写线程）──
+        std::atomic<bool> ready_{false};      // 可开始录制（enabled && 有通道 && 目录可用）
+        std::atomic<bool> recording_{false};  // 期望状态：是否在录（写线程据此开 / 封文件）
+        std::atomic<bool> state_req_{false};  // 有未处理的状态切换请求（唤醒写线程）
+        std::mutex cmd_mtx_;                  // 服务回调串行化（多线程执行器下也不会并发开 / 封）
+        // 状态切换握手：service 线程置 state_busy_ 后等写线程回填
+        std::mutex state_mtx_;
+        std::condition_variable state_cv_;
+        bool state_busy_ = false;     // 写线程尚未完成本次切换
+        std::string state_err_;       // 切换结果（空 = 成功）
+        std::string state_file_;      // 当前 / 最后封存的文件完整路径
+
+        // ── ROS 接口 ──
+        rclcpp::Service<CommandService>::SharedPtr cmd_server_;
+
         // ── 统计 ──
+        std::atomic<uint64_t> files_created_{0};  // 已打开的录制文件数（含当前）
         std::atomic<uint64_t> dropped_{0};    // 队列满 / 写失败丢弃的记录数
         std::atomic<uint64_t> throttled_{0};  // 限流丢弃的记录数
         std::atomic<bool> write_failed_{false};

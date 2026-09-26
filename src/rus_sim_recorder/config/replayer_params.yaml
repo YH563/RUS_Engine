@@ -1,0 +1,27 @@
+# 回放节点参数（rus_sim_recorder 的 rus_sim_recorder_replay）
+# 录音格式见 docs/Protocol/RecFormat.md；指令见 docs/Protocol/WsProtocol.md §4.7
+replayer_node:
+  ros__parameters:
+    # ── 录音来源 ──
+    record_dir: "records"    # 录音目录（与 recorder 的 output_dir 指向同一目录即可直接回放）
+    file_path: ""            # 非空 = 直接指定文件（并入清单第 0 项；忽略 file_index）
+    file_prefix: ""          # 目录过滤前缀（"" = 全部 *.rusrec；recorder 默认前缀是 run）
+    file_index: 0            # file_path 为空时：目录内按文件名升序的第 N 个（时间戳在名里 → 即时间顺序）
+
+    # ── 启动行为 ──
+    autoload: true           # 启动即载入 file_index 指定的文件（失败只告警，不退出）
+    autoplay: false          # 载入后立即播放（false = 停在起点等 replay_start）
+    loop: false              # 播完循环（true = 回到起点继续，不发 replay_done）
+
+    # ── 回放口径 ──
+    speed: 1.0                  # 初始倍速（0.05 ~ 20；replay_set_speed 可运行时改）
+    check_crc: true             # 发布前逐条校验 payload CRC32（坏块/截断读出来就停 + error 事件）
+    use_recv_time: false        # 时间轴基准：false = 消息时间戳 stamp；true = 录制入队时刻 recv
+    topic_prefix: ""            # 发布话题前缀："" = 原样发回录制时话题（前端可视化路径）
+                                #   ⚠️ 真驱动/真机在线会撞话题；隔离时用 "/replay"（→ /replay/driver/state）
+    qos_depth: 10               # 发布队列深度（与 driver / perception 的发布端一致）
+    qos_transient_local: true   # true = reliable + transient_local（bridge 对 /sensor/pointcloud
+                                #   的订阅要求 publisher durability ≥ transient_local，否则收不到）
+
+    # ── 观测 ──
+    log_period_sec: 5.0         # 回放统计日志周期（已发条数 / 速率 / 进度 / 倍速 / 失败数）

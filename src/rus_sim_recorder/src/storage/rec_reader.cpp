@@ -49,10 +49,18 @@ namespace RusRecorder::Storage {
         constexpr int64_t kIndexMaxBytes = 256LL * 1024 * 1024;
     }  // namespace
 
+    void RecReader::Close()
+    {
+        if (is_.is_open()) is_.close();
+        is_.clear();
+    }
+
     bool RecReader::Open(const std::string& path, std::string* err)
     {
         path_ = path;
         error_.clear();
+        // 反复 Open（回放换文件）必须先关掉上一个句柄：ifstream::open 对已打开的流会置 failbit
+        Close();
         channels_.clear();
         index_.clear();
         stats_.clear();
@@ -336,6 +344,111 @@ namespace RusRecorder::Storage {
         return true;
     }
 
+    bool RecReader::BuildTimeline(std::vector<RecordMeta>& out, std::string* err)
+    {
+        error_.clear();
+        out.clear();
+        if (!is_.is_open()) {
+            error_ = "未打开文件";
+            if (err) *err = error_;
+            return false;
+        }
+
+        // 与 Scan() 同口径的统计（唯一区别：payload 只跳过、不读内容）
+        std::map<uint16_t, size_t> stats_index;
+        for (size_t i = 0; i < channels_.size(); ++i) stats_index[channels_[i].channel_id] = i;
+        stats_.assign(channels_.size(), ChannelStats{});
+        std::map<uint16_t, uint32_t> last_seq;
+
+        const int64_t stride = header_.rec_header_size;
+        const int64_t extra = stride - static_cast<int64_t>(Components::kRecHeaderSize);
+        // 记录流上界：有尾索引 → 索引区起点；否则 → 文件尾（崩溃 / 截断文件）
+        const uint64_t limit = index_offset_hint_ >= 0
+            ? static_cast<uint64_t>(index_offset_hint_)
+            : static_cast<uint64_t>(file_size_);
+        uint64_t offset = stream_offset_;
+        scanned_records_ = 0;
+        corrupt_records_ = 0;   // payload 未读 → 不做 CRC 校验（见头文件说明）
+        scan_end_offset_ = stream_offset_;
+
+        is_.clear();
+        is_.seekg(static_cast<std::streamoff>(stream_offset_));
+        while (offset < limit) {
+            uint8_t hdr[Components::kRecHeaderSize] = {0};
+            is_.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
+            const auto got = is_.gcount();
+            if (got == 0) break;                                         // 干净结束
+            if (got != static_cast<std::streamsize>(sizeof(hdr))) {       // 尾部残留（不足一个记录头）
+                error_ = "记录头截断 @offset " + std::to_string(offset) +
+                         "（尾部落盘不全，仅扫描到此）";
+                break;
+            }
+            if (std::memcmp(hdr, Components::kRecMagic, sizeof(Components::kRecMagic)) != 0) {
+                error_ = "记录魔数不符 @offset " + std::to_string(offset) +
+                         "（文件截断 / 损坏，仅扫描到此）";
+                break;
+            }
+
+            Components::RecHeader rh;
+            rh.channel_id = RdU16(hdr + 4);    // 0..3 = magic "REC1"
+            rh.kind = RdU16(hdr + 6);
+            rh.seq = RdU32(hdr + 8);
+            rh.stamp_ns = RdI64(hdr + 12);
+            rh.recv_ns = RdI64(hdr + 20);
+            rh.payload_size = RdU32(hdr + 28);
+            rh.payload_crc32 = RdU32(hdr + 32);
+
+            if (rh.payload_size > Components::kMaxPayloadSize) {
+                error_ = "payload 长度异常（" + std::to_string(rh.payload_size) +
+                         " B）@offset " + std::to_string(offset);
+                break;
+            }
+            // payload 不真读，故越界必须显式用长度核对（末尾残缺记录到此收住）
+            if (offset + static_cast<uint64_t>(stride) + rh.payload_size > limit) {
+                error_ = "payload 截断 @offset " + std::to_string(offset);
+                break;
+            }
+
+            RecordMeta meta;
+            meta.offset = static_cast<int64_t>(offset);
+            meta.channel_id = rh.channel_id;
+            meta.kind = rh.kind;
+            meta.seq = rh.seq;
+            meta.stamp_ns = rh.stamp_ns;
+            meta.recv_ns = rh.recv_ns;
+            meta.payload_size = rh.payload_size;
+            meta.payload_crc32 = rh.payload_crc32;
+            out.push_back(meta);
+
+            const auto it = stats_index.find(rh.channel_id);
+            if (it != stats_index.end()) {
+                ChannelStats& st = stats_[it->second];
+                const auto seq_it = last_seq.find(rh.channel_id);
+                if (seq_it != last_seq.end() && rh.seq != seq_it->second + 1) st.seq_gaps++;
+                last_seq[rh.channel_id] = rh.seq;
+                if (st.records == 0) st.first_stamp_ns = rh.stamp_ns;
+                st.last_stamp_ns = rh.stamp_ns;
+                st.records++;
+                st.payload_bytes += rh.payload_size;
+                st.max_payload_size = std::max(st.max_payload_size, rh.payload_size);
+            }
+
+            // 跳过 payload：只移动读指针，不把字节读进内存
+            // （回放只需要"什么时候发哪条"，内容在发布前一刻按 offset 读回）
+            if (extra > 0) is_.seekg(extra, std::ios::cur);
+            if (rh.payload_size > 0) {
+                is_.seekg(static_cast<std::streamoff>(rh.payload_size), std::ios::cur);
+            }
+
+            offset += static_cast<uint64_t>(stride) + rh.payload_size;
+            scanned_records_++;
+            scan_end_offset_ = offset;
+        }
+
+        if (err) *err = error_;
+        return true;
+    }
+
     bool RecReader::ReadAt(size_t i, RecordInfo& info, std::vector<uint8_t>& payload, bool check_crc)
     {
         error_.clear();
@@ -348,17 +461,37 @@ namespace RusRecorder::Storage {
             return false;
         }
         const Components::IndexEntry& e = index_[i];
+        return read_record_at(e.offset, info, payload, check_crc, &e);
+    }
 
+    bool RecReader::ReadRecordAt(int64_t offset, RecordInfo& info, std::vector<uint8_t>& payload,
+                                 bool check_crc)
+    {
+        error_.clear();
+        const int64_t limit = index_offset_hint_ >= 0 ? index_offset_hint_ : file_size_;
+        if (offset < static_cast<int64_t>(stream_offset_) || offset >= limit) {
+            error_ = "记录偏移越界：" + std::to_string(offset) +
+                     "（记录流区间 [" + std::to_string(stream_offset_) + ", " +
+                     std::to_string(limit) + ")）";
+            return false;
+        }
+        return read_record_at(offset, info, payload, check_crc, nullptr);
+    }
+
+    bool RecReader::read_record_at(int64_t offset, RecordInfo& info,
+                                   std::vector<uint8_t>& payload, bool check_crc,
+                                   const Components::IndexEntry* expected)
+    {
         uint8_t hdr[Components::kRecHeaderSize] = {0};
         is_.clear();
-        is_.seekg(static_cast<std::streamoff>(e.offset));
+        is_.seekg(static_cast<std::streamoff>(offset));
         is_.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
         if (is_.gcount() != static_cast<std::streamsize>(sizeof(hdr))) {
-            error_ = "读取记录头失败 @offset " + std::to_string(e.offset);
+            error_ = "读取记录头失败 @offset " + std::to_string(offset);
             return false;
         }
         if (std::memcmp(hdr, Components::kRecMagic, sizeof(Components::kRecMagic)) != 0) {
-            error_ = "记录魔数不符 @offset " + std::to_string(e.offset) + "（索引指向的数据已损坏）";
+            error_ = "记录魔数不符 @offset " + std::to_string(offset) + "（该偏移处的数据已损坏）";
             return false;
         }
 
@@ -371,8 +504,14 @@ namespace RusRecorder::Storage {
         rh.payload_size = RdU32(hdr + 28);
         rh.payload_crc32 = RdU32(hdr + 32);
 
-        if (rh.channel_id != e.channel_id || rh.payload_size != e.payload_size) {
-            error_ = "索引与记录不一致 @offset " + std::to_string(e.offset);
+        if (rh.payload_size > Components::kMaxPayloadSize) {
+            error_ = "payload 长度异常（" + std::to_string(rh.payload_size) +
+                     " B）@offset " + std::to_string(offset);
+            return false;
+        }
+        if (expected != nullptr &&
+            (rh.channel_id != expected->channel_id || rh.payload_size != expected->payload_size)) {
+            error_ = "索引与记录不一致 @offset " + std::to_string(offset);
             return false;
         }
         const int64_t extra = static_cast<int64_t>(header_.rec_header_size) -
@@ -384,17 +523,17 @@ namespace RusRecorder::Storage {
             is_.read(reinterpret_cast<char*>(payload.data()),
                      static_cast<std::streamsize>(rh.payload_size));
             if (is_.gcount() != static_cast<std::streamsize>(rh.payload_size)) {
-                error_ = "payload 读取失败 @offset " + std::to_string(e.offset);
+                error_ = "payload 读取失败 @offset " + std::to_string(offset);
                 return false;
             }
         }
         if (check_crc && Components::Crc32(payload.data(), payload.size()) != rh.payload_crc32) {
-            error_ = "CRC 校验失败 @offset " + std::to_string(e.offset);
+            error_ = "CRC 校验失败 @offset " + std::to_string(offset);
             return false;
         }
 
         info.header = rh;
-        info.offset = e.offset;
+        info.offset = offset;
         return true;
     }
 

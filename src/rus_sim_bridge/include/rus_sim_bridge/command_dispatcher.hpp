@@ -56,6 +56,7 @@ namespace rus_sim_bridge {
             bool all_success = true;
             std::string message;   // 首个失败信息（空 = 全部成功）
             std::vector<double> result;
+            std::vector<std::string> strings;   // 文本结果（查询类：录音清单等，按模块顺序拼接）
             double deadline = 0.0;
         };
 
@@ -64,7 +65,8 @@ namespace rus_sim_bridge {
         void call_downstream(RusUtils::Module module, const RusUtils::CommandMessage& cmd,
                              const std::shared_ptr<FanOutContext>& ctx);
         void finish_fanout(const std::shared_ptr<FanOutContext>& ctx, bool success,
-                           const std::string& message, std::vector<double> result);
+                           const std::string& message, std::vector<double> result,
+                           std::vector<std::string> strings = {});
 
         /// 按模式切换模式相关指令（stop/pause/resume/reset/query_motion_done）的扇出目标
         void apply_mode(bool auto_mode);

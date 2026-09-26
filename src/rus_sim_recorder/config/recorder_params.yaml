@@ -4,6 +4,9 @@ recorder_node:
   ros__parameters:
     # ── 总开关 / 输出 ──
     enabled: true            # false = 不订阅、不落盘（进程空转，只打印一行提示）
+    autostart: true          # true = 启动即录（等价于起来就收到一次 recorder_start）
+                             #   false = 起来处于待命，由 /recorder/command 的 recorder_start 开始录
+                             #   （两条指令见 docs/Protocol/WsProtocol.md §4.8）
     output_dir: "records"    # 输出目录（相对路径按启动工作目录解析；不存在会自动创建）
                              #   启动日志会打印解析后的绝对路径，便于事后找文件
     file_prefix: "run"       # 文件名：<prefix>_<时间戳>.rusrec / 滚动 <prefix>_<时间戳>_p002.rusrec
