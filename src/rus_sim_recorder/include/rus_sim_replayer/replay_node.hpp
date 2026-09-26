@@ -15,7 +15,7 @@
 //        seek / set_speed / step / status（路由与参数见 WsProtocol.md §4.7）
 //
 //  两条口径（详见 docs/Protocol/RecFormat.md §7.4）：
-//    1. 时间轴：time_source=stamp（默认，消息时间戳）/ recv（录制入队时刻）；
+//    1. 时间轴：use_recv_time=false（默认，消息时间戳 stamp）/ true（录制入队时刻 recv）；
 //       倍速与 seek 都作用在这条轴上；时间戳回退（map_clear / 通道交错）会被钳到
 //       前一条，保证倍速播放不倒流。
 //    2. 话题：默认按录制时的话题原样发布（前端可视化路径）；与真机 / 真驱动共存时
@@ -66,7 +66,7 @@ namespace RusRecorder {
         /// 时间轴条目（payload 不驻留内存：发布前一刻按 offset 读回）
         struct Event {
             int64_t offset = 0;      // 记录头绝对偏移
-            int64_t t_ns = 0;        // 播放时刻（相对文件起点；time_source 决定取值来源）
+            int64_t t_ns = 0;        // 播放时刻（相对文件起点；use_recv_time 决定取值来源）
             uint16_t channel_id = 0;
         };
 

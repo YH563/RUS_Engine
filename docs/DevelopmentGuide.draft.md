@@ -459,14 +459,14 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 
 ### 8.3 `perception_node`（`config/perception_params.yaml`）
 
-| 参数 | 类型 | 默认值 | 文件值 |
-|------|------|--------|--------|
+| 参数 | 类型 | 默认值 | 文件值 | 说明 |
+|------|------|--------|--------|------|
 | `source` | string | `auto` | `realsense` | 数据源：`auto` / `realsense` / `ros_topic` / `replay`（空值按 `auto` 处理） |
 | `input_cloud_topic` | string | `/camera/camera/depth/color/points` | 同左 | 仅 `source=ros_topic` 使用 |
-| `output_cloud_topic` | string | `/preprocessed_cloud` | 同左 |
-| `frame_topic` | string | `/perception/frame` | 同左 |
-| `sensor_cloud_topic` | string | `/sensor/pointcloud` | 同左 |
-| `driver_state_topic` | string | `/driver/state` | 同左 |
+| `output_cloud_topic` | string | `/preprocessed_cloud` | 同左 |  |
+| `frame_topic` | string | `/perception/frame` | 同左 |  |
+| `sensor_cloud_topic` | string | `/sensor/pointcloud` | 同左 |  |
+| `driver_state_topic` | string | `/driver/state` | 同左 |  |
 | `mapping_mode` | string | `rolling` | `rolling` | 建图模式：`none`（不建图，发当前帧）/ `rolling`（累积 + 上限降采样）/ `accumulate`（只累积不降采样） |
 | `rs_serial` | string | `""` | `""` | RealSense 序列号（空 = 第一台；多相机必填） |
 | `rs_width` / `rs_height` / `rs_fps` | int | 640 / 480 / 15 | 同左 | 深度/彩色流配置（型号不支持时自动退回设备默认配置） |
@@ -478,14 +478,14 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | `replay_path` | string | `""` | `""` | `source=replay` 的 PCD 文件或目录 |
 | `replay_fps` / `replay_loop` | double / bool | 5.0 / true | 同左 | 回放频率 / 是否循环 |
 | `replay_frame_id` | string | `camera_optical_frame` | 同左 | 回放帧坐标系名（诊断用） |
-| `max_allowed_diff_sec` | double | 0.05 | 0.05 |
-| `max_pose_cache` | int | 256 | 256 |
-| `process_period` | double | 0.1 | 0.1 |
-| `allow_stale_pose` | bool | false | false |
-| `map_publish_period` | double | 2.0 | 2.0 |
-| `map_max_points` | int | 500000 | 500000 |
+| `max_allowed_diff_sec` | double | 0.05 | 0.05 |  |
+| `max_pose_cache` | int | 256 | 256 |  |
+| `process_period` | double | 0.1 | 0.1 |  |
+| `allow_stale_pose` | bool | false | false |  |
+| `map_publish_period` | double | 2.0 | 2.0 |  |
+| `map_max_points` | int | 500000 | 500000 |  |
 | `input_pcd` | string | `""` | `""` | 启动即加载的 PCD（base_link 系场景，非相机帧；空 = 不加载） |
-| `pcd_dir` | string | `""` | `""` |
+| `pcd_dir` | string | `""` | `""` |  |
 | `enable_passthrough_filter` | bool | true | **false** | 直通滤波开关（效果对齐阶段关闭） |
 | `enable_voxel_filter` | bool | true | **false** | 体素降采样开关（效果对齐阶段关闭） |
 | `enable_statistical_filter` | bool | false | false | 统计滤波开关（KDTree 开销大，高频处理建议关） |
@@ -493,9 +493,9 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | `passthrough_field` | string | `z` | `z` | 直通字段 x / y / z |
 | `passthrough_limit_min` / `_max` | double | −0.5 / 0.5 | 同左 | base_link 系 ROI（**不是相机 FOV**，须按真实作业空间重设） |
 | `passthrough_negative` | bool | false | false | |
-| `statistical_mean_k` | int | 50 | 50 |
-| `statistical_std_dev_mul` | double | 1.0 | 1.0 |
-| `camera_to_flange` | double[16] | 单位阵（未设置时） | 已标定矩阵（行优先） |
+| `statistical_mean_k` | int | 50 | 50 |  |
+| `statistical_std_dev_mul` | double | 1.0 | 1.0 |  |
+| `camera_to_flange` | double[16] | 单位阵（未设置时） | 已标定矩阵（行优先） |  |
 
 ### 8.4 `driver_node`（`config/driver_params.yaml`）
 
@@ -710,7 +710,7 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | 13 | `DevelopmentGuide.md` 测试章节 | `option(ENABLE_TEST)` + `test/src/*.cpp` + `--test` 模式 | 7 个包均无 `test/` 目录，`main.cpp` 也未解析 `--test` | 删除或标为「规划中，尚未落地」 |
 | 14 | `DevelopmentGuide.md` 目录结构 | 只有 `src/<pkg>/` + `include/<pkg>/` | perception 另有 `include/components` / `include/pointcloud`；driver 有 `src/driver` / `src/trajectory` / `src/controller` / `src/components` | 补充「算法子层目录」约定 |
 | 15 | `DevelopmentGuide.md` 命名空间 | 统一 `Rus` 前缀 | 见 §10（有例外与并存命名） | 规范加例外说明或改代码 |
-| 16 | `docs/DocExample.md` | 示例内容且 `docs/` 下无 `rus_sim_*/` 包文档 | 例文与实际节点无关 | 明确为模板，并按 §9 生成 7 个包文档 |
+| 16 | `docs/DocExample.md` | 示例内容且 `docs/` 下无 `rus_sim_*/` 包文档 | 例文与实际节点无关 | ✅ 已解决：`DocExample.md` 明确为模板（含结构 / 依赖 / 节点输入输出 / 启动 / 限制要素），已按 §9 生成 8 个包文档（`docs/rus_sim_*/rus_sim_*.md`，入口见 `docs/README.md`） |
 | 17 | 参数默认值 | 文档未提 | `end_hold_sec`（planning）未参数化；`driver_params.yaml` 的 `driver_type: "real"` 与代码默认 `"sim"` 不同 | 文档写清「默认值 vs 文件值」差异 |
 | 18 | 代码注释（非文档） | `command_dispatcher.cpp:36` 注释称「planning 通过订阅 **pre_scan_done 事件**获取完成标记」 | planning 实际订阅的是 `/preprocessed_cloud`；事件方向是 planning **发布**事件、bridge 订阅。注释与实现相反 | 修注释（避免后续文档照抄错） |
 
@@ -730,13 +730,15 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
    剩余待定：前端是否默认连该通道。
 4. **`map_clear` / `load_cloud`**：是否注册到 bridge（换场景 / 离线回放联调需要）。
 5. **坐标语义**：`set_start_pose` / `set_end_pose` 注释为「法兰系」，而 driver 的 `movel` / `servo_cart` 目标为 **TCP**；planning 送入插值器的状态取 `tool_pose`（TCP）。规范里必须明确一条链上的坐标系约定。
-6. **文档结构定稿**：`docs/DevelopmentGuide.md`（规范 + 契约总入口）→ `docs/Protocol/WsProtocol.md`（前端协议细则）→ `docs/<pkg>/<pkg>.md`（按 `DocExample.md` 模板生成 7 个包文档）。
+6. ✅ **文档结构定稿**（已落地）：`docs/README.md`（总入口：文档地图 / 环境 / 包总览 / 常用命令 / 话题服务总览）
+   → `docs/DevelopmentGuide.md`（代码规范）→ `docs/Protocol/README.md`（协议索引）+ `WsProtocol.md` / `RecFormat.md`（协议与文件格式细则）
+   → `docs/<pkg>/<pkg>.md`（**8 个包文档**，按 `DocExample.md` 模板：结构 / 输入输出 / 指令 / 参数 / 启动 / 限制）。
 7. **本稿合入方式**：评审通过后，把 §1–§10 作为 `DevelopmentGuide.md` 正式内容；§11 转为「文档维护清单」或拆分 issue 消项。
 8. ✅ **记录文件的离线回放**（已落地）：`rus_sim_recorder_replay`（节点 `replayer_node`，服务 `/replayer/command`）
    按 `.rusrec` 的时间轴把通道 0/1 重新发布回 `/driver/state`、`/sensor/pointcloud`（bridge 会照常推到前端
    `/state` / `/sensor`，即"前端回放可视化"）。两条口径已定并写进 `RecFormat.md` §7.4 / `WsProtocol.md` §4.7：
    - **时间戳与原字节**：**不重打时间戳、不改 payload**（前端解析路径与实时完全一致）；时间轴基准由参数
-     `time_source` 选 `stamp`（消息时间戳）/ `recv`（录制入队时刻）；**支持倍速（0.05~20）与暂停/恢复/seek/单步**。
+     `use_recv_time` 选 `false`（消息时间戳 `stamp`）/ `true`（录制入队时刻 `recv`）；**支持倍速（0.05~20）与暂停/恢复/seek/单步**。
    - **与真机共存**：默认原样发回录制时话题（会撞真驱动）→ 先停驱动，或用参数 `topic_prefix` 隔离
      （`/replay` → `/replay/driver/state`）；节点启动时会对空前缀打告警。
    实现要点：`RecReader::BuildTimeline()`（顺序扫描只收元数据，payload 不驻留内存）+ `ReadRecordAt(offset)`

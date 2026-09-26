@@ -212,9 +212,9 @@ ros2 service call /replayer/command rus_sim_interfaces/srv/CommandService "{comm
 
 - **有尾索引与无尾索引（崩溃 / 截断）都能回放**：时间轴来自顺序扫描，不依赖 `IndexEntry`；
   有索引时若索引条数与扫描结果不一致，告警并以扫描结果为准（索引仍是 inspect 体检的随机访问路径）。
-- **时间轴基准**（`replayer_node` 参数 `time_source`）：
-  - `stamp`（默认）：`RecHeader.stamp_ns`（消息时间戳）——复现驱动当时的时基；
-  - `recv`：`RecHeader.recv_ns`（录制入队时刻）——复现录制端的实际到达节奏。
+- **时间轴基准**（`replayer_node` 参数 `use_recv_time`）：
+  - `false`（默认）：`RecHeader.stamp_ns`（消息时间戳）——复现驱动当时的时基；
+  - `true`：`RecHeader.recv_ns`（录制入队时刻）——复现录制端的实际到达节奏。
   - 首条平移到 0（进度以文件起点计）；时间戳回退（`map_clear` 复位 / 通道交错）**钳到前一条**，
     保证倍速播放不倒流；`stamp_ns == 0`（消息未带时间戳）时回退用 `recv_ns`。
 - **payload 不驻留内存**：时间轴只有元数据（每条 ≈ 32 B），长录音也不会把 GB 级 payload 读进内存；

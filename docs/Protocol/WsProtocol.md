@@ -580,8 +580,8 @@ public static class SensorFrameDecoder
 
 **回放口径（与后端实现一致，前端不做任何换算）**
 
-- **时间轴基准**由回放节点参数 `time_source` 决定：`stamp`（默认，消息时间戳）/ `recv`
-  （录制入队时刻）；`progress`、`duration`、`replay_seek` 都在同一条轴上。
+- **时间轴基准**由回放节点参数 `use_recv_time` 决定：`false`（默认，用消息时间戳 `stamp`）/
+  `true`（用录制入队时刻 `recv`）；`progress`、`duration`、`replay_seek` 都在同一条轴上。
 - **不重打时间戳、不改 payload**：回放原样重发录制字节，`/state.timestamp` 仍是录制时刻，
   前端解析路径与实时完全一致（只是时间在"往回走"）。
 - **话题隔离**：`topic_prefix` 非空时发布到 `<prefix><原话题>`（如 `/replay/driver/state`）；
