@@ -49,15 +49,15 @@ namespace rus_sim_bridge {
     private:
         /// 一次扇出调用的共享上下文
         struct FanOutContext {
-            WsServer::ReplyFn reply;
-            uint32_t request_id = 0;
-            size_t pending = 0;
-            bool done = false;
-            bool all_success = true;
+            WsServer::ReplyFn reply;  // 回执回调
+            uint32_t request_id = 0;  // cmd.id
+            size_t pending = 0;  // 还剩几个模块未返回
+            bool done = false;  // 是否已完成
+            bool all_success = true;  // 是否全部成功
             std::string message;   // 首个失败信息（空 = 全部成功）
-            std::vector<double> result;
+            std::vector<double> result;  // 数值结果
             std::vector<std::string> strings;   // 文本结果（查询类：录音清单等，按模块顺序拼接）
-            double deadline = 0.0;
+            double deadline = 0.0;  // 超时时间点
         };
 
         void init_routing();

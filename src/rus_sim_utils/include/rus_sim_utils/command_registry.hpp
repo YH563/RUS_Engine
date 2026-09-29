@@ -17,7 +17,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "rus_sim_utils/command_defs.hpp"
+#include "command_defs.hpp"
 
 namespace RusUtils {
 

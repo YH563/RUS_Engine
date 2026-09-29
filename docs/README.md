@@ -10,6 +10,9 @@
 | [DevelopmentGuide.md](./DevelopmentGuide.md) | C++ 代码规范（命名 / 目录 / CMake / 注释 / 测试） | 写代码前 |
 | [DevelopmentGuide.draft.md](./DevelopmentGuide.draft.md) | **全系统契约初稿**：包清单、启动方式、话题/服务、指令总表、参数表、包内部结构、文档冲突清单 | 查接口事实、评审、写新文档时 |
 | [DocExample.md](./DocExample.md) | 单包文档**模板** | 新增包要写文档时 |
+| [SourceMap.md](./SourceMap.md) | **源码地图**：代码体量清单、五条主链、`文件:行号` 锚点、读法与自检判据 | 定位代码 / 面试准备 |
+| [InterviewWalkthrough.md](./InterviewWalkthrough.md) | **面试讲稿**：每问"结论 → 理由 → 代价"，附代码锚点 | 开口之前过一遍 |
+| [InterviewBridgeProtocol.md](./InterviewBridgeProtocol.md) | **桥接层 + 协议层深读**：C++17 特性台账、多线程与锁清单、计网八问、已知取舍 | 面软开岗主线、改 bridge / 协议前必读 |
 | [Protocol/WsProtocol.md](./Protocol/WsProtocol.md) | 前后端 WebSocket 协议（通道、指令、reply/event、state/sensor 线格式） | 前端联调 |
 | [Protocol/RecFormat.md](./Protocol/RecFormat.md) | `.rusrec` 记录文件格式（头 / 记录 / 索引 / 回放口径） | 读写录音、体检工具 |
 | [Protocol/README.md](./Protocol/README.md) | 协议文档索引与速查表 | 快速定位协议条款 |
