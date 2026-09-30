@@ -48,22 +48,27 @@
 { "id": 1, "cmd": "is_motion_done", "args": [] }
 { "id": 2, "cmd": "movej", "args": [0.1, 0.2, 0.3, 0, 0, 0, 0.5] }
 { "id": 3, "cmd": "set_mode", "args": [1] }
+// v0.5：字符串参数走 text（如按路径载入回放文件）
+{ "id": 4, "cmd": "replay_load_path", "args": [], "text": "/abs/run_20260930_153850.rusrec" }
 ```
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `id` | uint32 | ✅ | 客户端自增，用于关联 reply / event 的 ack_id |
 | `cmd` | string | ✅ | 指令名（见 §4 指令清单） |
-| `args` | double[] | ✅（可空数组） | 参数数组 |
+| `args` | double[] | ✅（可空数组） | 浮点参数数组 |
+| `text` | string | ❌（默认空串） | 字符串参数（如 `replay_load_path` 的文件路径） |
 
 说明：
 
-- 后端解析时只读取 `id` / `cmd` / `args` 三个字段，忽略其他字段；
-  前端可自行决定是否带 `"type":"command"`。
+- 后端解析时读取 `id` / `cmd` / `args` / `text` 四个字段，忽略其他字段；
+  前端可自行决定是否带 `"type":"command"`。`text` 为**可选**，旧前端不发即空串。
 - 每条指令都**必有 reply**（成功或失败）。
 - 参数数量不足 → reply `success=false, message="invalid args for command: <cmd>"`。
 - 未知指令 → reply `success=false, message="unknown command: <cmd>"`。
-- 无参指令若携带非空 args → 同样判定为 invalid args。
+- 无参指令若携带非空 args 或非空 text → 同样判定为 invalid args。
+- 指令按声明的接口校验：只声明浮点接口的指令收到非空 `text`、只声明字符串接口的
+  指令收到非空 `args`，均判非法。
 - JSON 无法解析（缺 `cmd` 等）→ reply `success=false, message="malformed command"`，`id=0`。
 - **运动类指令的单位约定**（`movej` / `movel` / `servo_*` / `start_jog`）见 §4 开头的量纲说明：
   位置 m、角度 rad；`movej`/`movel` 的 `speed`/`acc` 为**比例 0~1**，`start_jog` 的 `speed%`/`acc%` 为**百分比 0~100**。
@@ -523,7 +528,7 @@ public static class SensorFrameDecoder
 > 与在线链路的关系：回放是**旁路** —— 默认发回录制时的话题（`/driver/state`、
 > `/sensor/pointcloud`），因此 bridge 会像实时一样把它呈现到前端 `/state` / `/sensor`；
 > **真驱动 / 真机在线时会撞话题**，须先停驱动或用 `topic_prefix` 隔离（见文末"回放口径"）。
-> 本节 10 条指令**不随模式切换**（手动 / 自动与回放无关），始终路由到 REPLAYER。
+> 本节 11 条指令**不随模式切换**（手动 / 自动与回放无关），始终路由到 REPLAYER。
 
 **状态编码（`state`，出现在多个 result 的首位）**
 
@@ -551,18 +556,19 @@ public static class SensorFrameDecoder
 同样的 9 项也作为 `replay_start` / `replay_pause` / `replay_resume` / `replay_stop` /
 `replay_seek` / `replay_step` 的 result 返回（前端无需再补一次 `replay_status`）。
 
-| 指令名 | args | result | strings | 说明 |
-|--------|------|--------|---------|------|
-| `replay_list` | 无 | [文件数, 当前序号] | 全部录音文件名（文件名升序） | 列出可回放录音（前端下拉列表数据源） |
-| `replay_load` | [序号?] | [文件数, 当前序号] | [已载入文件名] | 载入录音（缺省 = 保持当前序号）；载入后 `state=2`、游标归零；**无尾索引的崩溃录音同样可载入** |
-| `replay_start` | [倍速?] | 9 项（见上） | — | 开始播放（未载入时按启动参数自动载入）；可选倍速（0.05~20） |
-| `replay_pause` | 无 | 9 项 | — | 暂停（进度冻结；非 playing 返回失败） |
-| `replay_resume` | 无 | 9 项 | — | 从暂停处继续（不跳时间） |
-| `replay_stop` | 无 | 9 项 | — | 停止并复位到起点（文件保留，可直接再 start） |
-| `replay_seek` | [t] | 9 项 | — | 跳到相对文件起点 `t` 秒（定位到第一条 ≥ t 的记录）；播放中跳转后以新位置重新起拍 |
-| `replay_set_speed` | [speed] | [speed] | — | 设置倍速（越界钳位；播放中即时生效且不跳时间） |
-| `replay_step` | [n?] | 9 项 | — | 单步发布 n 条（缺省 1；仅 paused / idle 可用） |
-| `replay_status` | 无 | 9 项 | [当前文件名]（未载入时为空） | 查询状态（前端进度条 / 时间轴数据源） |
+| 指令名 | args | text | result | strings | 说明 |
+|--------|------|------|--------|---------|------|
+| `replay_list` | 无 | — | [文件数, 当前序号] | 全部录音文件名（文件名升序） | 列出可回放录音（前端下拉列表数据源） |
+| `replay_load` | [序号?] | — | [文件数, 当前序号] | [已载入文件名] | 载入录音（缺省 = 保持当前序号）；载入后 `state=2`、游标归零；**无尾索引的崩溃录音同样可载入** |
+| `replay_load_path` | 无 | 绝对路径 | [文件数, 当前序号] | [已载入文件名] | 按路径载入（v0.5；前端原生文件对话框）；路径受节点参数 `allow_any_path` / `allowed_path_roots` 约束（见"文件来源"） |
+| `replay_start` | [倍速?] | — | 9 项（见上） | — | 开始播放（未载入时按启动参数自动载入）；可选倍速（0.05~20） |
+| `replay_pause` | 无 | — | 9 项 | — | 暂停（进度冻结；非 playing 返回失败） |
+| `replay_resume` | 无 | — | 9 项 | — | 从暂停处继续（不跳时间） |
+| `replay_stop` | 无 | — | 9 项 | — | 停止并复位到起点（文件保留，可直接再 start） |
+| `replay_seek` | [t] | — | 9 项 | — | 跳到相对文件起点 `t` 秒（定位到第一条 ≥ t 的记录）；播放中跳转后以新位置重新起拍 |
+| `replay_set_speed` | [speed] | — | [speed] | — | 设置倍速（越界钳位；播放中即时生效且不跳时间） |
+| `replay_step` | [n?] | — | 9 项 | — | 单步发布 n 条（缺省 1；仅 paused / idle 可用） |
+| `replay_status` | 无 | — | 9 项 | [当前文件名]（未载入时为空） | 查询状态（前端进度条 / 时间轴数据源） |
 
 **典型时序（前端时间轴控件 → 指令映射）**
 
@@ -570,6 +576,8 @@ public static class SensorFrameDecoder
 前端                                    后端
  │  replay_list ──────────────► reply result=[4, 0] strings=["run_…_120000.rusrec", …]
  │  replay_load [1] ──────────► reply result=[4, 1] strings=["run_…_120500.rusrec"]
+ │  replay_load_path text=…   ─► reply result=[5, 0] strings=["run_…_153850.rusrec"]（v0.5）
+ │                               （选中文件并入清单第 0 项，file_index=0）
  │  replay_start [2.0] ───────► reply result=[1, 0, 2.4, 2.0, 0, 30, 1, 1, 4]
  │                               （/state 与 /sensor 通道开始出现回放数据）
  │  replay_pause ─────────────► reply result=[2, 1.1, 2.4, 2.0, 13, 30, 1, 1, 4]
@@ -589,9 +597,14 @@ public static class SensorFrameDecoder
 - **失败语义**：读盘 / CRC 校验失败 → 停止回放 + 广播 `error` 事件（`ack_id` = 触发播放的
   指令 id），**不会继续发坏数据**；载入失败（文件不存在 / 序号越界 / 无记录）由 `reply.success=false`
   + `message` 说明。
-- **文件来源**：录音目录由节点参数 `record_dir`（与 recorder 的 `output_dir` 对齐）决定；
-  清单只按文件名升序（recorder 文件名里含时间戳 → 即时间顺序），**不接受前端传路径**
-  （协议数值通道只传 `double`，路径属于后端配置）。
+- **文件来源（v0.5 起支持按路径）**：
+  - 默认路径：`replay_list` 列出 `record_dir`（与 recorder 的 `output_dir` 对齐）内的
+    `.rusrec`，文件名升序（含时间戳 → 即时间顺序），前端按序号 `replay_load [i]` 载入。
+  - 按路径：`replay_load_path` 的 `text` 传**绝对路径**（前端原生文件对话框）。
+    后端 `canonicalize` 后校验：必须是存在的普通文件、扩展名 `.rusrec`，且
+    除非节点参数 `allow_any_path=true`，否则必须落在 `allowed_path_roots`
+    （默认为 `record_dir`）内 —— 拒绝 `..` 穿越与目录外文件。
+  - `allow_any_path` 默认 **false**（安全优先）；置 true 时仅建议 WS 只监听本地。
 
 ### 4.8 路由到 RECORDER（录制开关）
 

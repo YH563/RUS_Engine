@@ -82,6 +82,7 @@ namespace rus_sim_bridge {
         // ── 回放（rus_sim_recorder_replay：离线复盘，与在线链路无耦合）──
         // 全部直达 replayer；不参与模式切换（手动/自动与回放无关）。
         registry_.Register(CmdName::kReplayLoad,     {Module::REPLAYER});
+        registry_.Register(CmdName::kReplayLoadPath, {Module::REPLAYER});
         registry_.Register(CmdName::kReplayList,     {Module::REPLAYER});
         registry_.Register(CmdName::kReplayStart,    {Module::REPLAYER});
         registry_.Register(CmdName::kReplayPause,    {Module::REPLAYER});
@@ -113,7 +114,7 @@ namespace rus_sim_bridge {
 
         // 1) 解析为类型化指令（校验合法性）
         std::string err;
-        auto parsed = Cmd::ParseCommand(cmd.cmd, cmd.args, err);
+        auto parsed = Cmd::ParseCommand(cmd.cmd, cmd.args, cmd.text, err);
         if (!parsed) {
             reply(SerializeResult(ResultMessage::MakeReply(cmd.id, false, err)));
             return;
@@ -251,6 +252,7 @@ namespace rus_sim_bridge {
         req->client_id = cmd.id;
         req->command = cmd.cmd;
         req->args = cmd.args;
+        req->text = cmd.text;   // 字符串参数透传（如 replay_load_path 的路径）
 
         client->async_send_request(req,
             [this, ctx](rclcpp::Client<CommandService>::SharedFuture future) {

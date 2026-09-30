@@ -92,7 +92,7 @@ rus_sim_recorder/
 
 | 方向 | 名称 | 类型 | 说明 |
 |------|------|------|------|
-| 输入 | 录音文件 | `.rusrec` | 由参数 `record_dir` / `file_path` / `file_index` 决定，**不接受前端传路径** |
+| 输入 | 录音文件 | `.rusrec` | 默认由参数 `record_dir` / `file_path` / `file_index` 决定；v0.5 起可用 `replay_load_path` 传路径（受沙箱约束） |
 | 输入（服务） | `/replayer/command` | `CommandService` | 10 条 `replay_*` |
 | 输出（话题） | `/driver/state`、`/sensor/pointcloud`（或 `<prefix>…`） | `RobotState` / `SensorFrame` | 原字节重发（**不重打时间戳、不改 payload**） |
 | 输出（话题） | `/module_events` | `ModuleEvent` | `replay_done`（播到末尾且 `loop=false`）；读盘 / CRC 失败发 `error` |
@@ -103,6 +103,7 @@ rus_sim_recorder/
 |------|------|------|
 | `replay_list` | 无 | 列出录音文件（`strings` = 文件名清单，文件名升序即时间顺序） |
 | `replay_load` | [序号?] | 载入录音（载入后 `state=2`、游标归零）；无尾索引的崩溃录音同样可载入 |
+| `replay_load_path` | text = 绝对路径 | 按路径载入（前端文件对话框）；`canonicalize` + `.rusrec` + 根目录沙箱（受 `allow_any_path` / `allowed_path_roots` 约束） |
 | `replay_start` | [倍速?] | 开始播放（未载入时按启动参数自动载入） |
 | `replay_pause` / `replay_resume` | 无 | 暂停 / 从暂停处继续（不跳时间） |
 | `replay_stop` | 无 | 停止并复位到起点（文件保留，可直接再 start） |
@@ -126,6 +127,8 @@ rus_sim_recorder/
 | `use_recv_time` | bool | false | 时间轴基准：false = 消息时间戳 `stamp`；true = 录制入队时刻 `recv` |
 | `topic_prefix` | string | `""` | 发布话题前缀（`""` = 原样发回；**与真机共存时会撞话题**，隔离用 `/replay`） |
 | `qos_depth` / `qos_transient_local` | int / bool | 10 / true | 与 driver / perception 发布端匹配（bridge 要求 `transient_local`） |
+| `allow_any_path` | bool | false | `replay_load_path` 沙箱：false = 仅 `allowed_path_roots` 下；true = 接受任意绝对路径（仅建议 WS 限本地） |
+| `allowed_path_roots` | string[] | `[]` | 允许的根目录；空 = 回退为 `record_dir` |
 | `log_period_sec` | double | 5.0 | 回放统计日志周期 |
 
 ## 工具：rus_sim_recorder_inspect（离线体检）

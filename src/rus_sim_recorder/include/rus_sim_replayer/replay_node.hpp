@@ -86,6 +86,10 @@ namespace RusRecorder {
         void refresh_file_list();
         /// 载入第 file_index 个文件（建时间轴 + 建发布器）；失败保持"无文件"状态
         bool load_file(size_t file_index, std::string* err);
+        /// 从给定路径载入（replay_load_path 用）；失败保持"无文件"状态
+        bool load_path(const std::string& path, std::string* err);
+        /// 校验并规范化待回放路径（canonicalize + .rusrec + 根目录沙箱）；失败写 err
+        bool resolve_path(const std::string& in, std::string& out, std::string* err) const;
         void unload();
 
         // ── 回放 ──
@@ -119,6 +123,9 @@ namespace RusRecorder {
         bool qos_transient_local_ = true;   // 与 /sensor/pointcloud 的 transient_local 订阅兼容
         std::string topic_prefix_;          // 发布话题前缀（"" = 原样）
         double log_period_sec_ = 5.0;       // 回放统计日志周期
+        // replay_load_path 沙箱：false = 仅允许 path_roots_ 下（默认回退 record_dir）
+        bool allow_any_path_ = false;
+        std::vector<std::string> path_roots_;   // 允许的根目录；空 = 只用 record_dir
 
         // ── 共享状态（mtx_ 保护）──
         std::mutex mtx_;
@@ -128,6 +135,7 @@ namespace RusRecorder {
         bool loaded_ = false;
         std::string loaded_path_;           // 当前文件完整路径
         size_t loaded_index_ = 0;           // 当前文件在 file_list_ 中的下标
+        std::string runtime_pin_;           // replay_load_path 载入的文件（并入清单第 0 项）
         Storage::RecReader reader_;
         std::vector<Event> events_;
         std::map<uint16_t, ChannelPub> pubs_;

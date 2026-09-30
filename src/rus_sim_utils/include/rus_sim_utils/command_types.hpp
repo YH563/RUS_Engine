@@ -272,6 +272,18 @@ namespace RusUtils {
             }
         };
 
+        /// 按路径载入待回放文件（text = 绝对路径；前端原生文件对话框选中）
+        /// 字符串接口：ParseText（与浮点接口 ParseArgs 并列，见下方通用解析层）
+        struct ReplayLoadPath {
+            static constexpr std::string_view kName = CmdName::kReplayLoadPath;
+            std::string path;
+            static bool ParseText(const std::string& s, ReplayLoadPath& o) {
+                if (s.empty()) return false;
+                o.path = s;
+                return true;
+            }
+        };
+
         /// 列出录音清单（result = [文件数, 当前序号]；文件名在 reply.message 里）
         struct ReplayList {
             static constexpr std::string_view kName = CmdName::kReplayList;
@@ -375,7 +387,7 @@ namespace RusUtils {
             Disconnect, IsConnected, IsInDragTeach, RobotEnable,
             GetState, IsMotionDone, RunFile, SwitchDriver, GetDriverType,
             SetTimeSpeed, GetTimeSpeed, GetSimTime, StepOnce, GetFrameRate,
-            ReplayLoad, ReplayList, ReplayStart, ReplayPause, ReplayResume,
+            ReplayLoad, ReplayLoadPath, ReplayList, ReplayStart, ReplayPause, ReplayResume,
             ReplayStop, ReplaySeek, ReplaySetSpeed, ReplayStep, ReplayStatus,
             RecorderStart, RecorderStop, RecorderStatus>;
 
@@ -383,30 +395,81 @@ namespace RusUtils {
         //  解析：指令名 + args → 类型化结构体
         // ────────────────────────────────────────────────────────────
 
+        // ────────────────────────────────────────────────────────────
+        //  通用指令解析层（两个作者接口 + 偏特化分派）
+        //  ────────────────────────────────────────────────────────────
+        //  指令类型可声明：
+        //    static bool ParseArgs(const std::vector<double>&, T&)  —— 浮点接口
+        //    static bool ParseText(const std::string&, T&)          —— 字符串接口
+        //  声明哪个就按哪个校验；两者都声明则依次调用；都不声明 = 无参指令。
+        //  具体实现由 CommandParser<T, 有浮点, 有字符串> 的偏特化在编译期选定，
+        //  既有指令无需任何改动。
+
         namespace detail {
 
-            struct Entry {
-                std::string_view name;
-                bool (*parse)(const std::vector<double>&, CommandVariant&);
+            /// 参数来源（打包两种来源，统一表项签名；将来可扩展更多种类）
+            struct CommandInput {
+                const std::vector<double>& args;
+                const std::string& text;
             };
 
-            // 检测结构体是否声明了 ParseArgs(args, out) → bool
+            // 检测浮点接口 ParseArgs(args, out) → bool
             template <typename T, typename = void>
-            struct has_parse_args : std::false_type {};
+            struct has_args_parse : std::false_type {};
             template <typename T>
-            struct has_parse_args<T, std::void_t<decltype(
+            struct has_args_parse<T, std::void_t<decltype(
                 T::ParseArgs(std::declval<const std::vector<double>&>(),
                              std::declval<T&>()))>> : std::true_type {};
 
+            // 检测字符串接口 ParseText(text, out) → bool
+            template <typename T, typename = void>
+            struct has_text_parse : std::false_type {};
+            template <typename T>
+            struct has_text_parse<T, std::void_t<decltype(
+                T::ParseText(std::declval<const std::string&>(),
+                             std::declval<T&>()))>> : std::true_type {};
+
+            // 按 (有浮点, 有字符串) 四组合偏特化选出解析实现
+            template <typename T, bool WithArgs, bool WithText>
+            struct CommandParser;   // 主模板不定义，只允许偏特化
+
+            template <typename T>
+            struct CommandParser<T, false, false> {          // 无参指令
+                static bool Parse(const CommandInput& in, T& o) {
+                    return in.args.empty() && in.text.empty();
+                }
+            };
+            template <typename T>
+            struct CommandParser<T, true, false> {           // 仅浮点接口
+                static bool Parse(const CommandInput& in, T& o) {
+                    return in.text.empty() && T::ParseArgs(in.args, o);
+                }
+            };
+            template <typename T>
+            struct CommandParser<T, false, true> {           // 仅字符串接口
+                static bool Parse(const CommandInput& in, T& o) {
+                    return in.args.empty() && !in.text.empty() && T::ParseText(in.text, o);
+                }
+            };
+            template <typename T>
+            struct CommandParser<T, true, true> {            // 两种接口都声明
+                static bool Parse(const CommandInput& in, T& o) {
+                    return T::ParseArgs(in.args, o) && T::ParseText(in.text, o);
+                }
+            };
+
+            struct Entry {
+                std::string_view name;
+                bool (*parse)(const CommandInput&, CommandVariant&);
+            };
+
             // 统一解析入口：构造结构体实例 → 写入 variant
             template <typename T>
-            bool parse_into(const std::vector<double>& args, CommandVariant& out) {
+            bool parse_into(const CommandInput& in, CommandVariant& out) {
                 T value;
-                if constexpr (has_parse_args<T>::value) {
-                    if (!T::ParseArgs(args, value)) return false;
-                } else {
-                    if (!args.empty()) return false;  // 无参指令不接受参数
-                }
+                if (!CommandParser<T, has_args_parse<T>::value,
+                                  has_text_parse<T>::value>::Parse(in, value))
+                    return false;
                 out = std::move(value);
                 return true;
             }
@@ -431,14 +494,17 @@ namespace RusUtils {
         }  // namespace detail
 
         /// 解析指令名 + 参数为类型化结构体。
+        /// @param args 浮点参数数组（可为空）
+        /// @param text 字符串参数（无则空串）
         /// @return nullopt = 未知指令或参数非法（错误描述写入 err）
         inline std::optional<CommandVariant> ParseCommand(
             const std::string& name, const std::vector<double>& args,
-            std::string& err) {
+            const std::string& text, std::string& err) {
             for (const auto& e : detail::CommandTable) {
                 if (e.name != name) continue;
                 CommandVariant out;
-                if (e.parse(args, out)) return out;
+                detail::CommandInput in{args, text};
+                if (e.parse(in, out)) return out;
                 err = "invalid args for command: " + name;
                 return std::nullopt;
             }

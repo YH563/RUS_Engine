@@ -56,11 +56,20 @@ namespace RusRecorder {
         qos_transient_local_ = declare_parameter<bool>("qos_transient_local", true);
         topic_prefix_        = declare_parameter<std::string>("topic_prefix", "");
         log_period_sec_      = declare_parameter<double>("log_period_sec", 5.0);
+        // replay_load_path 沙箱（默认安全：仅允许 record_dir 内）
+        allow_any_path_      = declare_parameter<bool>("allow_any_path", false);
+        path_roots_          = declare_parameter<std::vector<std::string>>(
+            "allowed_path_roots", std::vector<std::string>{});
 
         speed_ = ClampSpeed(speed_, 1.0);
         qos_depth_ = std::min(std::max(qos_depth_, 1), 1000);
         if (record_dir_.empty()) record_dir_ = "records";
         while (record_dir_.size() > 1 && record_dir_.back() == '/') record_dir_.pop_back();
+        if (path_roots_.empty()) path_roots_.push_back(record_dir_);   // 缺省根 = record_dir
+        if (allow_any_path_) {
+            RCLCPP_WARN(get_logger(),
+                        "allow_any_path=true：replay_load_path 将接受任意路径（仅建议 WS 限本地时使用）");
+        }
         // topic_prefix 归一：非空则 "/" 开头、不带尾 "/"（拼话题 = prefix + 原话题）
         if (!topic_prefix_.empty()) {
             if (topic_prefix_.front() != '/') topic_prefix_.insert(topic_prefix_.begin(), '/');
@@ -152,10 +161,12 @@ namespace RusRecorder {
         file_list_.clear();
 
         std::error_code ec;
-        // file_path 指定：并入清单第 0 项（replay_load 0 即选中它）
+        // file_path（启动参数）/ runtime_pin_（replay_load_path）：并入清单第 0 项
+        // （runtime_pin_ 优先，使前端刚选中的文件序号稳定）
+        const std::string& pin_src = !runtime_pin_.empty() ? runtime_pin_ : file_path_;
         std::string pinned;
-        if (!file_path_.empty()) {
-            pinned = std::filesystem::absolute(file_path_, ec).string();
+        if (!pin_src.empty()) {
+            pinned = std::filesystem::absolute(pin_src, ec).string();
         }
 
         std::vector<std::string> names;
@@ -203,6 +214,7 @@ namespace RusRecorder {
 
     bool ReplayNode::load_file(size_t file_index, std::string* err)
     {
+        runtime_pin_.clear();   // 按序号载入 = 回到默认清单（不 pin 之前选中的路径）
         refresh_file_list();
         if (file_list_.empty()) {
             if (err) *err = "录音目录内没有 .rusrec 文件：" + record_dir_;
@@ -214,9 +226,21 @@ namespace RusRecorder {
             return false;
         }
 
+        const std::string path = file_list_[file_index];
+        if (!load_path(path, err)) return false;
+        loaded_index_ = file_index;
+        return true;
+    }
+
+    // ================================================================
+    //  载入（按路径）：replay_load_path / load_file 共用
+    //  调用者持 mtx_（内部用到 reader_ / events_ / pubs_ / state_）
+    // ================================================================
+
+    bool ReplayNode::load_path(const std::string& path, std::string* err)
+    {
         unload();   // 换文件前彻底释放上一个文件（发布器 / 时间轴 / 句柄）
 
-        const std::string path = file_list_[file_index];
         std::string e;
         if (!reader_.Open(path, &e)) {
             if (err) *err = "打开录音失败：" + e;
@@ -284,7 +308,7 @@ namespace RusRecorder {
 
         loaded_ = true;
         loaded_path_ = path;
-        loaded_index_ = file_index;
+        loaded_index_ = 0;   // 路径载入：pin 在清单第 0 项
         cursor_ = 0;
         state_ = State::kPaused;   // 载入后停在起点（进度 0），等 replay_start
         anchor_locked(0);
@@ -297,6 +321,54 @@ namespace RusRecorder {
         if (!reader_.error().empty()) {
             RCLCPP_WARN(get_logger(), "扫描备注：%s", reader_.error().c_str());
         }
+        return true;
+    }
+
+    // ================================================================
+    //  路径校验（replay_load_path 沙箱）
+    //  ────────────────────────────────────────────────────────────────
+    //  canonicalize（解析符号链接 + 必须存在）→ 普通文件 → 扩展名 .rusrec →
+    //  除非 allow_any_path_，否则必须落在 path_roots_（默认 record_dir）内。
+    // ================================================================
+
+    bool ReplayNode::resolve_path(const std::string& in, std::string& out,
+                                  std::string* err) const
+    {
+        std::error_code ec;
+        const auto p = std::filesystem::canonical(in, ec);
+        if (ec) {
+            if (err) *err = "路径不存在或无法解析：" + in;
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(p, ec)) {
+            if (err) *err = "不是普通文件：" + p.string();
+            return false;
+        }
+        if (p.extension() != ".rusrec") {
+            if (err) *err = "不是 .rusrec 文件：" + p.string();
+            return false;
+        }
+        if (!allow_any_path_) {
+            bool under = false;
+            const std::string ps = p.string();
+            for (const auto& r : path_roots_) {
+                std::error_code rec;
+                const auto root = std::filesystem::canonical(r, rec);
+                if (rec) continue;
+                const std::string rs = root.string();
+                std::string prefix = rs;
+                if (prefix.empty() || prefix.back() != '/') prefix += '/';
+                if (ps == rs || ps.rfind(prefix, 0) == 0) {
+                    under = true;
+                    break;
+                }
+            }
+            if (!under) {
+                if (err) *err = "路径不在允许目录内（allow_any_path=false）：" + ps;
+                return false;
+            }
+        }
+        out = p.string();
         return true;
     }
 
@@ -522,6 +594,33 @@ namespace RusRecorder {
             res->result = {static_cast<double>(file_list_.size()),
                            static_cast<double>(loaded_index_)};
             res->strings = {BaseName(loaded_path_)};
+            return;
+        }
+
+        // ── 按路径载入（text = 路径；受 allow_any_path / allowed_path_roots 沙箱约束）──
+        if (req->command == kReplayLoadPath) {
+            std::lock_guard<std::mutex> lk(mtx_);
+            std::string abs, err;
+            if (!resolve_path(req->text, abs, &err)) {
+                res->success = false;
+                res->message = err;
+                RCLCPP_WARN(get_logger(), "replay_load_path 失败：%s", err.c_str());
+                return;
+            }
+            runtime_pin_ = abs;   // 并入清单第 0 项（后续 refresh 保持序号稳定）
+            refresh_file_list();
+            if (!load_path(abs, &err)) {
+                res->success = false;
+                res->message = err;
+                RCLCPP_WARN(get_logger(), "replay_load_path 失败：%s", err.c_str());
+                return;
+            }
+            res->success = true;
+            res->message = "loaded: " + BaseName(loaded_path_);
+            res->result = {static_cast<double>(file_list_.size()),
+                           static_cast<double>(loaded_index_)};
+            res->strings = {BaseName(loaded_path_)};
+            RCLCPP_INFO(get_logger(), "按路径载入（replay_load_path）：%s", abs.c_str());
             return;
         }
 

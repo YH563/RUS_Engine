@@ -23,5 +23,10 @@ replayer_node:
     qos_transient_local: true   # true = reliable + transient_local（bridge 对 /sensor/pointcloud
                                 #   的订阅要求 publisher durability ≥ transient_local，否则收不到）
 
+    # ── replay_load_path 沙箱（前端选路径载入）──
+    allow_any_path: false       # false（安全默认）= 只允许 allowed_path_roots 下的 .rusrec；
+                                #   true = 接受任意绝对路径（仅建议 WS 只监听 localhost 时使用）
+    allowed_path_roots: []      # 允许的根目录列表；空 = 回退为 record_dir
+
     # ── 观测 ──
     log_period_sec: 5.0         # 回放统计日志周期（已发条数 / 速率 / 进度 / 倍速 / 失败数）

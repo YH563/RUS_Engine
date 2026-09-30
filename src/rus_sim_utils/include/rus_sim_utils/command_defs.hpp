@@ -78,6 +78,8 @@ namespace RusUtils {
         // ── 回放（rus_sim_recorder_replay：按 .rusrec 时间轴把录音重发回话题）──
         //   时间轴口径 / 状态编码见 docs/Protocol/WsProtocol.md §4.7
         inline constexpr std::string_view kReplayLoad     = "replay_load";
+        // 按路径载入（text = 绝对路径；受回放节点 allow_any_path / 允许根目录约束）
+        inline constexpr std::string_view kReplayLoadPath = "replay_load_path";
         inline constexpr std::string_view kReplayList     = "replay_list";
         inline constexpr std::string_view kReplayStart    = "replay_start";
         inline constexpr std::string_view kReplayPause    = "replay_pause";

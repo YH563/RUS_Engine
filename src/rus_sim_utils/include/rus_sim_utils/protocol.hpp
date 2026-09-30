@@ -50,7 +50,8 @@ namespace RusUtils {
     struct CommandMessage {
         uint32_t id = 0;              // 客户端自增，用于关联 reply
         std::string cmd;              // 指令名（与 Cmd 结构体 kName 一致）
-        std::vector<double> args;     // 参数数组（可为空）
+        std::vector<double> args;     // 浮点参数数组（可为空）
+        std::string text;             // 字符串参数（如回放文件路径；无则空串）
     };
 
     // ════════════════════════════════════════════════════════════════
@@ -276,6 +277,7 @@ namespace RusUtils {
         if (cmd.empty()) return false;
         out.cmd = std::move(cmd);
         out.args = detail::find_arr(json, "args");
+        out.text = detail::find_str(json, "text");   // 可选；无则空串（find_str 已处理转义）
         out.id = detail::find_id(json);
         return true;
     }
