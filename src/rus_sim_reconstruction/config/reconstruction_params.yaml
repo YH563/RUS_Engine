@@ -1,0 +1,18 @@
+reconstruction_node:
+  ros__parameters:
+    # 输入：单帧当前视角点云（base_link）。perception 的 /perception/frame 即此语义；
+    # 若与真实 perception 联调，改成 /perception/frame；测试数据源默认也发这里。
+    cloud_topic: "/perception/frame"
+    output_topic: "/reconstructed_cloud"
+
+    voxel_size: 0.004      # 面元体素边长（米）
+    shards: 12             # 分片并行度（≈ CPU 线程数）
+    threads: 0             # 0 = 硬件并发
+
+    min_confidence: 2.0    # 发布时只保留观测次数 ≥ 此值的面元（滤碎面元）
+    publish_period: 1.0    # 重建结果发布周期（秒）
+
+    estimate_normals: true # 输入无 PCA 法线时用 PCL 估计（较慢；真机可由 SDK 提供）
+    normal_k: 10           # 法线估计近邻数
+
+    save_pcd: ""           # 非空则每次发布落盘该 PCD（联调/测试用）
