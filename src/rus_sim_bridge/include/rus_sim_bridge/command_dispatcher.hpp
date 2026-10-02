@@ -55,6 +55,7 @@ namespace rus_sim_bridge {
             bool done = false;  // 是否已完成
             bool all_success = true;  // 是否全部成功
             std::string message;   // 首个失败信息（空 = 全部成功）
+            uint32_t error_code = 0;  // 首个失败错误码（0 = 成功；见 error_codes.hpp）
             std::vector<double> result;  // 数值结果
             std::vector<std::string> strings;   // 文本结果（查询类：录音清单等，按模块顺序拼接）
             double deadline = 0.0;  // 超时时间点
@@ -66,7 +67,8 @@ namespace rus_sim_bridge {
                              const std::shared_ptr<FanOutContext>& ctx);
         void finish_fanout(const std::shared_ptr<FanOutContext>& ctx, bool success,
                            const std::string& message, std::vector<double> result,
-                           std::vector<std::string> strings = {});
+                           std::vector<std::string> strings = {},
+                           uint32_t error_code = 0);
 
         /// 按模式切换模式相关指令（stop/pause/resume/reset/query_motion_done）的扇出目标
         void apply_mode(bool auto_mode);

@@ -9,6 +9,7 @@ string event          # 事件名
 bool   success        # 是否成功
 string message        # 错误描述 / 附加说明（成功可为空）
 float64[] result      # 处理结果（查询类带数据，操作类为空）
+uint32 error_code     # 结构化错误码（0=成功；见 rus_sim_utils/error_codes.hpp）
 
 # 关联的前端 command id：bridge 转发指令时透传（CommandService 请求的 client_id），
 # 用于生成 event 的 ack_id；0 = 无关联（如模块自发事件）

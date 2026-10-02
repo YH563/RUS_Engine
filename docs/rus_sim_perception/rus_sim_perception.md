@@ -54,7 +54,10 @@ rus_sim_perception/
 |------|------|------------|------|
 | `map_clear` | ✅ perception（清空累积地图） | ❌ | 服务可直接调用，前端暂不可达 |
 | `load_cloud` | ✅ perception（`args[0]`=索引 → `pcd_dir` 第 N 个 `.pcd`；无参 → `input_pcd`） | ❌ | 同上 |
-| `pre_scan_start` / `pre_scan_end` / `query_prescan_done` | ❌ 未实现 | ✅ 路由到 perception | 转发后返回 `unknown command` |
+| `pre_scan_start` / `pre_scan_end` | ❌ 未实现 | ✅ 路由到 perception | 转发后返回 `unknown command` |
+
+> 注：`pre_scan_done` 与 `query_prescan_done` 路由到 **planning**（由 planning 实现），
+> 不在 perception 侧处理。
 
 > 详见 [draft §6.4](../DevelopmentGuide.draft.md)；预扫查流程归属尚未定案（draft §12）。
 

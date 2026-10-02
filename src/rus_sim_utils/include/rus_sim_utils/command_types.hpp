@@ -54,6 +54,12 @@ namespace RusUtils {
             static constexpr std::string_view kName = CmdName::kPreScanEnd;
         };
 
+        /// 扫查结束（前端在半自动建图完成后下发）：planning 抓取当前地图快照
+        /// 初始化轨迹生成器，之后 plan 才放行。无参数。
+        struct PreScanDone {
+            static constexpr std::string_view kName = CmdName::kPreScanDone;
+        };
+
         struct SetStartPose {
             static constexpr std::string_view kName = CmdName::kSetStartPose;
             std::vector<double> pose;                     // [x,y,z]
@@ -378,7 +384,7 @@ namespace RusUtils {
 
         using CommandVariant = std::variant<
             Connect, Shutdown, SetMode,
-            PreScanStart, PreScanEnd,
+            PreScanStart, PreScanEnd, PreScanDone,
             SetStartPose, SetEndPose, Plan, Execute,
             Stop, Pause, Resume, Reset,
             QueryPreScanDone, QueryMotionDone,

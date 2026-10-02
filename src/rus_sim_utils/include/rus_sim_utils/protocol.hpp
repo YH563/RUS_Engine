@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "command_defs.hpp"
+#include "error_codes.hpp"
 
 namespace RusUtils {
 
@@ -72,11 +73,13 @@ namespace RusUtils {
         std::string message;          // 错误描述 / 附加说明（成功可为空）
         std::vector<double> result;   // 数值结果（查询类带数据，操作类为空）
         std::vector<std::string> strings;  // 文本结果（查询类；如录音文件清单 / 当前文件名）
+        uint32_t error_code = 0;      // 结构化错误码（见 error_codes.hpp；0 = 成功）
 
         static ResultMessage MakeReply(uint32_t id, bool ok,
                                        std::string msg,
                                        std::vector<double> res = {},
-                                       std::vector<std::string> strs = {}) {
+                                       std::vector<std::string> strs = {},
+                                       uint32_t error_code = 0) {
             ResultMessage r;
             r.kind = Kind::Reply;
             r.id = id;
@@ -84,13 +87,15 @@ namespace RusUtils {
             r.message = std::move(msg);
             r.result = std::move(res);
             r.strings = std::move(strs);
+            r.error_code = error_code;
             return r;
         }
 
         static ResultMessage MakeEvent(std::string evt, uint32_t ack_id, bool ok,
                                        std::string msg = {},
                                        std::vector<double> res = {},
-                                       std::vector<std::string> strs = {}) {
+                                       std::vector<std::string> strs = {},
+                                       uint32_t error_code = 0) {
             ResultMessage r;
             r.kind = Kind::Event;
             r.event = std::move(evt);
@@ -99,6 +104,7 @@ namespace RusUtils {
             r.message = std::move(msg);
             r.result = std::move(res);
             r.strings = std::move(strs);
+            r.error_code = error_code;
             return r;
         }
     };
@@ -294,7 +300,8 @@ namespace RusUtils {
         s += ",\"success\":" + std::string(r.success ? "true" : "false") +
              ",\"message\":\"" + detail::json_escape(r.message) + "\"" +
              ",\"result\":" + detail::arr_to_json(r.result) +
-             ",\"strings\":" + detail::str_arr_to_json(r.strings) + "}";
+             ",\"strings\":" + detail::str_arr_to_json(r.strings) +
+             ",\"error_code\":" + std::to_string(r.error_code) + "}";
         return s;
     }
 

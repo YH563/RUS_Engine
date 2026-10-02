@@ -7,6 +7,8 @@
 
 namespace rus_sim_bridge {
 
+    using namespace RusUtils;  // ErrorCode / to_u32 / Cmd / CmdName 等协议符号
+
     // ================================================================
     //  构造：读取参数 + 初始化路由注册表
     // ================================================================
@@ -31,12 +33,14 @@ namespace rus_sim_bridge {
         registry_.Register(CmdName::kPlan,             {Module::PLANNING});
         registry_.Register(CmdName::kExecute,          {Module::PLANNING});
 
-        // ── perception（点云预扫查 / 预处理）──
-        // pre_scan_* 由 perception 全权处理（采集/处理/发布 /preprocessed_cloud），
-        // planning 通过订阅 pre_scan_done 事件获取完成标记。
+        // ── 预扫查（半自动建图）──
+        // 前端在半自动建图完成后下发 pre_scan_done：由 planning 抓取当前点云地图
+        // 快照初始化轨迹生成器（置 prescan_done_ 门），之后 plan 才放行；
+        // query_prescan_done 同属 planning 状态查询。
         registry_.Register(CmdName::kPreScanStart,     {Module::PERCEPTION});
         registry_.Register(CmdName::kPreScanEnd,       {Module::PERCEPTION});
-        registry_.Register(CmdName::kQueryPreScanDone, {Module::PERCEPTION});
+        registry_.Register(CmdName::kPreScanDone,      {Module::PLANNING});
+        registry_.Register(CmdName::kQueryPreScanDone, {Module::PLANNING});
 
         // ── driver（驱动） ──
         registry_.Register(CmdName::kConnect,          {Module::DRIVER});
@@ -116,14 +120,17 @@ namespace rus_sim_bridge {
         std::string err;
         auto parsed = Cmd::ParseCommand(cmd.cmd, cmd.args, cmd.text, err);
         if (!parsed) {
-            reply(SerializeResult(ResultMessage::MakeReply(cmd.id, false, err)));
+            const bool unknown = err.rfind("unknown command", 0) == 0;
+            const uint32_t code = to_u32(unknown ? ErrorCode::kUnknownCommand
+                                                 : ErrorCode::kInvalidArgs);
+            reply(SerializeResult(ResultMessage::MakeReply(cmd.id, false, err, {}, {}, code)));
             return;
         }
 
         // 2) 按注册表分发
         if (!registry_.IsRegistered(cmd.cmd)) {
             reply(SerializeResult(ResultMessage::MakeReply(cmd.id, false,
-                "unknown command: " + cmd.cmd)));
+                "unknown command: " + cmd.cmd, {}, {}, to_u32(ErrorCode::kUnknownCommand))));
             return;
         }
 
@@ -244,7 +251,8 @@ namespace rus_sim_bridge {
             // 模块未启动 → 立即失败，避免悬挂
             RCLCPP_WARN(node_->get_logger(), "服务 %s 不可用，指令 %s 失败",
                         service.c_str(), cmd.cmd.c_str());
-            finish_fanout(ctx, false, "service unavailable: " + service, {});
+            finish_fanout(ctx, false, "service unavailable: " + service, {}, {},
+                          to_u32(ErrorCode::kServiceUnavailable));
             return;
         }
 
@@ -260,27 +268,38 @@ namespace rus_sim_bridge {
                 std::string message;
                 std::vector<double> result;
                 std::vector<std::string> strings;
+                uint32_t error_code = 0;
                 try {
                     auto res = future.get();
                     success = res->success;
                     message = res->message;
                     result = res->result;
                     strings = res->strings;
+                    error_code = res->error_code;
+                    // 下游失败但未带码 → 归领域通用失败（P1）
+                    if (!success && error_code == 0)
+                        error_code = to_u32(ErrorCode::kModuleFailure);
                 } catch (const std::exception& e) {
                     message = std::string("service exception: ") + e.what();
+                    error_code = to_u32(ErrorCode::kServiceException);
                 }
-                finish_fanout(ctx, success, message, std::move(result), std::move(strings));
+                finish_fanout(ctx, success, message, std::move(result), std::move(strings),
+                              error_code);
             });
     }
 
     void CommandDispatcher::finish_fanout(const std::shared_ptr<FanOutContext>& ctx,
                                           bool success, const std::string& message,
                                           std::vector<double> result,
-                                          std::vector<std::string> strings) {
+                                          std::vector<std::string> strings,
+                                          uint32_t error_code) {
         if (ctx->done) return;
         if (!success) {
             ctx->all_success = false;
-            if (ctx->message.empty()) ctx->message = message;
+            if (ctx->message.empty()) {
+                ctx->message = message;
+                ctx->error_code = error_code;
+            }
         }
         // 成功路径：各模块返回结果依次拼接（数值 + 文本）
         for (double v : result) ctx->result.push_back(v);
@@ -290,7 +309,8 @@ namespace rus_sim_bridge {
         if (ctx->pending == 0) {
             ctx->done = true;
             auto reply = RusUtils::ResultMessage::MakeReply(ctx->request_id, ctx->all_success,
-                ctx->message.empty() ? "ok" : ctx->message, ctx->result, ctx->strings);
+                ctx->message.empty() ? "ok" : ctx->message, ctx->result, ctx->strings,
+                ctx->error_code);
             ctx->reply(RusUtils::SerializeResult(reply));
         }
     }
@@ -304,7 +324,7 @@ namespace rus_sim_bridge {
         for (auto& w : active_) {
             auto ctx = w.lock();
             if (ctx && !ctx->done && now_s > ctx->deadline) {
-                finish_fanout(ctx, false, "timeout", {});
+                finish_fanout(ctx, false, "timeout", {}, {}, to_u32(ErrorCode::kTimeout));
             }
         }
         active_.erase(std::remove_if(active_.begin(), active_.end(),

@@ -77,4 +77,11 @@ install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch
   PATTERN "__pycache__" EXCLUDE)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 
+# ── 单元测试（storage/components 为纯 std，测试无需 ROS 运行时）──
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_rus_sim_recorder test/test_recorder.cpp)
+  target_link_libraries(test_rus_sim_recorder rec_storage)
+endif()
+
 ament_package()

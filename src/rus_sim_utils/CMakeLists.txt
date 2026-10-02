@@ -39,5 +39,15 @@ ament_export_include_directories("include")
 ament_export_dependencies(rclcpp geometry_msgs)
 ament_export_targets(${PROJECT_NAME})
 
+# ── 单元测试（header-only：直接编进测试可执行）──
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_rus_sim_utils test/test_utils.cpp)
+  # ament_add_gtest 内部用 plain signature，这里必须同签名（不能带 PRIVATE）
+  # 链接本包 INTERFACE 目标：带出 include/ 与 Eigen3
+  target_link_libraries(test_rus_sim_utils ${PROJECT_NAME})
+  ament_target_dependencies(test_rus_sim_utils geometry_msgs)
+endif()
+
 # 最后必须调用 ament_package
 ament_package()

@@ -96,10 +96,10 @@
   "result": [4.0, 0.0], "strings": ["run_20260926_120000.rusrec", "run_20260926_120500.rusrec"] }
 
 // event：异步完成通知（id 固定 0，ack_id 关联原指令）
-{ "type": "event", "id": 0, "ack_id": 3, "event": "pre_scan_done",
-  "success": true, "message": "", "result": [], "strings": [] }
+{ "type": "event", "id": 0, "ack_id": 3, "event": "plan_done",
+  "success": true, "message": "plan done", "result": [], "strings": [] }
 { "type": "event", "id": 0, "ack_id": 3, "event": "error",
-  "success": false, "message": "plan failed: 未完成预扫查（无点云数据）", "result": [], "strings": [] }
+  "success": false, "message": "plan failed: 未完成预扫查", "result": [], "strings": [] }
 ```
 
 | 字段 | 类型 | reply | event | 说明 |
@@ -122,16 +122,17 @@
 - `reply` 只回发给**发起该指令的那条 `/control` 连接**。
 - `event` 广播给**所有已连接的 `/control` 连接**（无论谁触发的）。
 
-**长任务闭环**：前端发 `command(id=3, cmd="pre_scan_start")` →
+**长任务闭环**：前端发 `command(id=3, cmd="plan")` →
 后端立即回 `reply(id=3, success=true)` → 子模块完成后 bridge 推
-`event(ack_id=…, event="pre_scan_done", ...)`。前端可用 ack_id 把事件挂回原请求。
+`event(ack_id=3, event="plan_done" / "error", ...)`。前端可用 ack_id 把事件挂回原请求。
 
 > **ack_id 的实际归属**（以当前后端实现为准）：
-> - `pre_scan_done` / `error`（预扫查门失败）挂在 **`pre_scan_end`** 的 id 上
->   （预扫查的"完成判定"发生在 `pre_scan_end` 指令处理时）；
 > - `plan_done` 挂在 `plan` 的 id 上；
 > - `scan_done` 挂在 `execute` 的 id 上；
-> - `error`（plan 阶段）挂在 `plan` 的 id 上。
+> - `error`（plan 前置门 / 生成 / 插值失败）挂在 `plan` 的 id 上。
+>
+> **注意**：`pre_scan_done` 自 v0.5 起是**前端下发的指令**（路由到 planning），
+> 不再是后端事件——前端在半自动建图完成后发送它，planning 抓取地图快照初始化后才放行 `plan`。
 
 **超时**：指令转发到子模块后，默认 **5000ms** 无响应 → bridge 回
 `reply(success=false, message="timeout")`。
@@ -375,8 +376,9 @@ public static class SensorFrameDecoder
 > 指令名、参数校验、路由目标以后端代码为准（`rus_sim_utils` + bridge 注册表）。
 > 下表按 bridge 当前路由分组，仅用于前端参考。
 >
-> **路由分组与模式的关系**：业务指令（`pre_scan_*` / `set_*_pose` / `plan` / `execute` /
-> `query_prescan_done`）**始终**路由到 PLANNING；直控指令（`movej` / `movel` / `servo_*` /
+> **路由分组与模式的关系**：业务指令（`pre_scan_done` / `set_*_pose` / `plan` / `execute` /
+> `query_prescan_done`）**始终**路由到 PLANNING；`pre_scan_start` / `pre_scan_end` 路由到
+> PERCEPTION（该节点尚未实现，转发后返回 `unknown command`）；直控指令（`movej` / `movel` / `servo_*` /
 > `start_jog` / `robot_enable` 等）**始终**路由到 DRIVER。仅 `pause` / `resume` / `reset` /
 > `query_motion_done` / `stop` 随模式切换（见 §4.6）。
 >
@@ -430,8 +432,7 @@ public static class SensorFrameDecoder
 
 | 指令名 | args | result | 说明 |
 |--------|------|--------|------|
-| `pre_scan_start` | 无 | 空 | 预扫查开始（完成后有 `pre_scan_done` 事件） |
-| `pre_scan_end` | 无 | 空 | 预扫查结束（无点云数据则失败 + `error` 事件） |
+| `pre_scan_done` | 无 | 空 | **前端在半自动建图完成后下发**：planning 抓取当前地图快照初始化轨迹生成器（置预扫查门），之后 `plan` 才放行；未收到点云 / 点云为空 → `reply success=false` |
 | `set_start_pose` | [x, y, z] | 空 | 设置起点（≥3 个参数；支持 3/6/7：位置（m） / 位置（m）+RPY（rad） / 位置（m）+四元数 xyzw） |
 | `set_end_pose` | [x, y, z] | 空 | 设置终点（≥3 个参数；同上） |
 | `plan` | 无 | 空 | 开始规划（未完成预扫查或未设置起终点则失败 + `error` 事件；完成后有 `plan_done` 事件） |
@@ -487,8 +488,10 @@ public static class SensorFrameDecoder
 
 ### 4.4 PERCEPTION 指令
 
-通道 / 注册已预留，指令待后续设计，暂不定义。感知大块数据（点云 / 图像）
-始终走 `/sensor` 二进制通道，不通过 command 传输。
+bridge 已将 `pre_scan_start` / `pre_scan_end` 注册到 PERCEPTION，但 **perception 节点尚未实现**
+（转发后返回 `unknown command: ...`）。真正的"半自动建图完成"入口在 planning 的
+`pre_scan_done`（见 §4.2）。另外 `map_clear` / `load_cloud` 在 perception 已实现，但 bridge 未注册，
+前端暂不可达。感知大块数据（点云 / 图像）始终走 `/sensor` 二进制通道，不通过 command 传输。
 
 ### 4.5 多目标扇出指令
 
@@ -507,7 +510,8 @@ public static class SensorFrameDecoder
 |------|------------------|----------|
 | `pause` / `resume` / `reset` / `query_motion_done` | → PLANNING（planning 协调扫查） | → DRIVER（直控） |
 | `stop` | 扇出 `{PLANNING, DRIVER}` | 仅 DRIVER（急停直达） |
-| `pre_scan_*` / `set_*_pose` / `plan` / `execute` / `query_prescan_done` | → PLANNING | → PLANNING（不变） |
+| `pre_scan_done` / `set_*_pose` / `plan` / `execute` / `query_prescan_done` | → PLANNING | → PLANNING（不变） |
+| `pre_scan_start` / `pre_scan_end` | → PERCEPTION（未实现） | → PERCEPTION（未实现） |
 | 直控指令（`movej` / `servo_*` / `start_jog` 等） | → DRIVER | → DRIVER（不变） |
 | 回放指令（`replay_*`） | → REPLAYER | → REPLAYER（不变，与手动/自动无关） |
 | 录制指令（`recorder_*`） | → RECORDER | → RECORDER（不变，与手动/自动无关） |
@@ -682,7 +686,6 @@ public static class SensorFrameDecoder
 
 | 事件名 | 触发时机 | 关联指令（ack_id） | success | result |
 |--------|----------|--------------------|---------|--------|
-| `pre_scan_done` | 预扫查完成（点云已就绪） | `pre_scan_end` | true | 空 |
 | `plan_done` | 轨迹规划完成 | `plan` | true | 空 |
 | `scan_done` | 正式扫查执行完成 / 被 stop 中断 | `execute` | true / false（中断） | 空 |
 | `motion_done` | 当前运动完成（预留） | 任意运动指令 | true | 空 |
@@ -690,9 +693,10 @@ public static class SensorFrameDecoder
 | `error` | 模块错误（预扫查门 / 规划失败 / 回放读盘失败等） | 触发指令 | false | 空 |
 
 **典型失败场景**：
-- 未 `pre_scan_end` 直接 `plan` → `error`，`message="plan failed: 未完成预扫查（无点云数据）"`。
-- `pre_scan_end` 时无点云数据 → `error`，`message="pre_scan failed: 未收到点云数据"`。
-- 未设置起终点直接 `plan` → `error`，`message="plan failed: 起终点未设置"`。
+- 未 `pre_scan_done` 直接 `plan` → `error`，`message="plan failed: 未完成预扫查"`。
+- 起终点未设置直接 `plan` → `error`，`message="plan failed: 起终点未设置"`。
+- `plan` 轨迹生成 / 插值失败 → `error`，`message="plan failed: 轨迹生成失败"` / `"plan failed: 插值失败"`。
+- 未实现的指令（如 `pre_scan_start`）→ `reply success=false`，`message="unknown command: pre_scan_start"`。
 
 ---
 
@@ -701,10 +705,8 @@ public static class SensorFrameDecoder
 ```
 前端                                  后端
  │  set_mode [1] ────────────────►  reply ok（默认已是自动）
- │  pre_scan_start ─────────────►  reply ok
- │                                   感知产点云 → /preprocessed_cloud
- │  pre_scan_end ───────────────►  reply ok
- │  ◄── event pre_scan_done (ack_id=pre_scan_end)
+ │  （半自动建图：移动机械臂 / 感知持续累积地图 → /preprocessed_cloud）
+ │  pre_scan_done ──────────────►  reply ok（planning 抓快照初始化生成器）
  │  set_start_pose [-0.4,-0.21,-0.16] ► reply ok
  │  set_end_pose   [-0.41,0.24,-0.17] ► reply ok
  │  plan ───────────────────────►  reply ok

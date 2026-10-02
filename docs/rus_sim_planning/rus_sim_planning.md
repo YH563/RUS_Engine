@@ -58,7 +58,7 @@ rus_sim_planning/
 | `reset` | ≤2（`[mode?, enable?]`） | 停伺服 + `stop` + 清轨迹 |
 | `query_motion_done` | 无 | `[0/1]`：执行中或暂停中 = 0，空闲 = 1 |
 | `stop` | 无 | 中止执行（bridge 自动模式扇出 `{PLANNING, DRIVER}`） |
-| `pre_scan_done` | — | 代码已实现分支，但 `command_types.hpp` 无结构体 + bridge 未注册 → 前端不可达 |
+| `pre_scan_done` | — | **前端在半自动建图完成后下发**：抓取当前地图快照初始化轨迹生成器（置预扫查门）；`command_types.hpp` 有结构体、bridge 已注册到 PLANNING |
 
 ### 事件（→ `/module_events`）
 

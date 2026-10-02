@@ -388,7 +388,7 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | `map_clear` | perception | ❌ 未注册 | 前端不可达 |
 | `load_cloud` | perception（`args[0]`=索引 → `pcd_dir` 下第 N 个 `.pcd`；无参 → `input_pcd`） | ❌ 未注册 | 前端不可达 |
 | `pre_scan_start` / `pre_scan_end` | ❌ 未实现 | ✅ 注册 | 转发后返回 `unknown command: pre_scan_*` |
-| `query_prescan_done` | ❌ 未实现（planning 侧有实现） | ✅ 注册到 PERCEPTION | 转发后返回 `unknown command` |
+| `pre_scan_done` / `query_prescan_done` | ✅ planning（已实现） | ✅ 注册到 **PLANNING** | **已可达**（v0.5 P0 修复） |
 
 ### 6.5 扇出指令
 
@@ -698,13 +698,13 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | 1 | `docs/README.md` 项目结构 | 列出 `frcobot_ros2 / rus_sim_controller / rus_sim_force / rus_sim_planner / rus_sim_pointcloud / rus_sim_task_executor` | 实际只有 7 个包（含 `rus_sim_bridge` / `rus_sim_driver` / `rus_sim_perception` / `rus_sim_planning`） | 按 §1.1 重写 |
 | 2 | `docs/README.md` 依赖 | libigl / MoveIt / pinocchio 及固定版本号 | 无这些依赖；实际为 libwebsockets / zstd / PCL / Boost.graph / MuJoCo / EAIK / Fairino SDK | 按 §1.3 重写 |
 | 3 | `README.md` | 「快速开始」为空代码块；两个文档链接都指向 `docs/README.md` | —— | 补构建/启动命令，区分前后端文档入口 |
-| 4 | `WsProtocol.md` §4.2 | `pre_scan_start` / `pre_scan_end` / `query_prescan_done` → PLANNING | bridge 路由到 **PERCEPTION**，且 perception 未实现这些指令 | 先定契约（§12-1），再改文档 |
-| 5 | `WsProtocol.md` §4.4 | 「PERCEPTION 指令待设计，暂不定义」 | 与 §4.2 自相矛盾；perception 已实现 `map_clear` / `load_cloud` | 统一为真实状态 |
-| 6 | `WsProtocol.md` §5 / §6 | `pre_scan_done` 事件在 `pre_scan_end` 时触发、ack=pre_scan_end | **代码中无任何 `pre_scan_done` 事件发布者**；planning 只发 `plan_done` / `scan_done` / `error` | 删除或按新契约重写 |
+| 4 | ✅ 已解决（v0.5） | `pre_scan_*` 路由 | 现：`pre_scan_done` / `query_prescan_done` → **PLANNING**（已实现）；`pre_scan_start` / `pre_scan_end` → PERCEPTION（未实现） | 文档已同步 |
+| 5 | ✅ 已解决（v0.5） | `WsProtocol.md` §4.4 PERCEPTION 指令说明 | 已重写为真实状态（`pre_scan_start/end` 未实现，`map_clear`/`load_cloud` 未注册） | 已完成 |
+| 6 | ✅ 已解决（v0.5） | `pre_scan_done` 事件 | 已从 §5 事件表 / §6 时序删除；`pre_scan_done` 现为**指令**（前端 → planning） | 已完成 |
 | 7 | `WsProtocol.md` §4.3 | `movel` 需 ≥6 参数 | `command_types.hpp` `MoveL::ParseArgs` 接受 ≥3 | 改为「≥3（3=仅位置，姿态保持）」 |
 | 8 | `WsProtocol.md` §4.3 | 工具坐标系 5 条指令列为可用 | bridge 已注册但 `command_types.hpp` 无结构体 → 实际返回 `unknown command` | 补 `command_types` 或文档标注不可用 |
 | 9 | `WsProtocol.md` §8 | 代码对照写 `src/command_dispatcher.cpp` | 实际为 `src/rus_sim_bridge/command_dispatcher.cpp`；且缺 perception / driver 对照 | 修路径 + 补全 |
-| 10 | `WsProtocol.md` §5 失败场景 | `plan failed: 未完成预扫查（无点云数据）`、`pre_scan_end` 无点云 → `error` | 实际文本为 `plan failed: 未完成预扫查`（无括号）；`pre_scan_end` 由 perception 处理，不会产生该错误 | 按代码文本修正 |
+| 10 | ✅ 已解决（v0.5） | `WsProtocol.md` §5 失败场景文本 | 已改为实际代码文本（`plan failed: 未完成预扫查` 等） | 已完成 |
 | 11 | `WsProtocol.md` §3.1 | 超时 `message="timeout"` | ✅ 与代码一致 | 保留 |
 | 12 | `DevelopmentGuide.md` CMake 模板 | `add_library(pointcloud_core STATIC ...)`、库名 `package_core` | 实际全部 `SHARED`、库名 `<域>_core`；节点可执行只含 `main.cpp`；`ament_target_dependencies` 与 `target_link_libraries` 有明确分工 | 用 `bridge`/`planning` 的真实 CMake 重写模板 |
 | 13 | `DevelopmentGuide.md` 测试章节 | `option(ENABLE_TEST)` + `test/src/*.cpp` + `--test` 模式 | 7 个包均无 `test/` 目录，`main.cpp` 也未解析 `--test` | 删除或标为「规划中，尚未落地」 |
@@ -712,14 +712,15 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | 15 | `DevelopmentGuide.md` 命名空间 | 统一 `Rus` 前缀 | 见 §10（有例外与并存命名） | 规范加例外说明或改代码 |
 | 16 | `docs/DocExample.md` | 示例内容且 `docs/` 下无 `rus_sim_*/` 包文档 | 例文与实际节点无关 | ✅ 已解决：`DocExample.md` 明确为模板（含结构 / 依赖 / 节点输入输出 / 启动 / 限制要素），已按 §9 生成 8 个包文档（`docs/rus_sim_*/rus_sim_*.md`，入口见 `docs/README.md`） |
 | 17 | 参数默认值 | 文档未提 | `end_hold_sec`（planning）未参数化；`driver_params.yaml` 的 `driver_type: "real"` 与代码默认 `"sim"` 不同 | 文档写清「默认值 vs 文件值」差异 |
-| 18 | 代码注释（非文档） | `command_dispatcher.cpp:36` 注释称「planning 通过订阅 **pre_scan_done 事件**获取完成标记」 | planning 实际订阅的是 `/preprocessed_cloud`；事件方向是 planning **发布**事件、bridge 订阅。注释与实现相反 | 修注释（避免后续文档照抄错） |
+| 18 | ✅ 已解决（v0.5） | `command_dispatcher.cpp` 注释称「planning 通过订阅 pre_scan_done 事件获取完成标记」 | 已重写为真实契约（`pre_scan_done` 指令 → PLANNING） | 已完成 |
 
 ---
 
 ## 12. 待决策 / 下一步
 
-1. **预扫查流程归属（阻塞性）**：`pre_scan_start` / `pre_scan_end` / `pre_scan_done` / `query_prescan_done` 归 planning 还是 perception？
-   当前状态是「谁也走不通」，`plan` 永远返回失败。需先定契约，再同步改代码与文档。
+1. ✅ **预扫查流程归属（已定案，v0.5）**：`pre_scan_done`（前端在半自动建图完成后下发）
+   与 `query_prescan_done` 归 **planning**（已实现并放行 `plan`）；`pre_scan_start` / `pre_scan_end`
+   注册在 PERCEPTION 但**未实现**（半自动流程暂不需要）。阻塞已解除。
 2. **工具坐标系指令链路**：是否把 5 条工具指令补进 `command_types.hpp`（driver 侧已全实现，只差这一环）。
 3. ✅ **`/sensor` 通道**（已落地）：bridge 订阅 `/sensor/pointcloud` → `/sensor` 通道按二进制帧下发
    （覆盖式，参数 `sensor_topic` / `forward_sensor`）。**阶段性决策：暂不处理 `scope=map`**——

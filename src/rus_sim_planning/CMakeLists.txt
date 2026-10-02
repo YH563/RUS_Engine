@@ -50,4 +50,12 @@ install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch
   PATTERN "__pycache__" EXCLUDE)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 
+# ── 单元测试 ──
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_trajectory_interpolator test/test_trajectory_interpolator.cpp)
+  # ament_add_gtest 用 plain signature，链接 planning_core 带出全部依赖与 include
+  target_link_libraries(test_trajectory_interpolator planning_core)
+endif()
+
 ament_package()

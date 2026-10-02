@@ -133,7 +133,8 @@ namespace rus_sim_bridge {
 
     void BridgeNode::on_module_event(const ModuleEvent::SharedPtr evt) {
         auto r = RusUtils::ResultMessage::MakeEvent(evt->event, evt->client_id,
-                                                    evt->success, evt->message, evt->result);
+                                                    evt->success, evt->message, evt->result,
+                                                    {}, evt->error_code);
         ws_.BroadcastEvent(RusUtils::SerializeResult(r));
     }
 
