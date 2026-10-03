@@ -71,6 +71,15 @@ target_link_libraries(rus_sim_recon_live_surfel_mesh reconstruction_core
   ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
 install(TARGETS rus_sim_recon_live_surfel_mesh DESTINATION lib/${PROJECT_NAME})
 
+# ── 实时：完整滤波链 → 稀疏 TSDF → 增量网格（PCL + OpenGL）──
+add_executable(rus_sim_recon_live_tsdf_filtered examples/live_tsdf_filtered_gl.cpp)
+target_include_directories(rus_sim_recon_live_tsdf_filtered PRIVATE
+  ${GLFW_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS} ${PCL_INCLUDE_DIRS})
+target_link_libraries(rus_sim_recon_live_tsdf_filtered
+  reconstruction_core reconstruction_pcl
+  ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} OpenGL::GL ${PCL_LIBRARIES} ${CMAKE_DL_LIBS})
+install(TARGETS rus_sim_recon_live_tsdf_filtered DESTINATION lib/${PROJECT_NAME})
+
 # ── 面元 → 网格（GP3）──
 add_executable(rus_sim_recon_surfel_mesh examples/surfel_mesh.cpp)
 target_include_directories(rus_sim_recon_surfel_mesh PRIVATE ${PCL_INCLUDE_DIRS})
