@@ -71,6 +71,12 @@ target_link_libraries(rus_sim_recon_live_surfel_mesh reconstruction_core
   ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
 install(TARGETS rus_sim_recon_live_surfel_mesh DESTINATION lib/${PROJECT_NAME})
 
+# ── 一次性复杂点云重建（滤波链 → 稀疏 TSDF → 网格）──
+add_executable(rus_sim_recon_complex examples/complex_recon.cpp)
+target_include_directories(rus_sim_recon_complex PRIVATE ${PCL_INCLUDE_DIRS})
+target_link_libraries(rus_sim_recon_complex reconstruction_core reconstruction_pcl ${PCL_LIBRARIES})
+install(TARGETS rus_sim_recon_complex DESTINATION lib/${PROJECT_NAME})
+
 # ── 实时：完整滤波链 → 稀疏 TSDF → 增量网格（PCL + OpenGL）──
 add_executable(rus_sim_recon_live_tsdf_filtered examples/live_tsdf_filtered_gl.cpp)
 target_include_directories(rus_sim_recon_live_tsdf_filtered PRIVATE

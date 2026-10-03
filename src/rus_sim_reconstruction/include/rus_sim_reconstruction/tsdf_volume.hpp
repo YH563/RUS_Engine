@@ -37,10 +37,12 @@ namespace RusReconstruction {
         explicit TsdfVolume(const Options& options);
 
         /// 积分一帧：点/法向（base 系），origin = 传感器原点（base 系）
+        /// @param orient_to_origin true=法线朝传感器翻转（逐帧视角）；false=直接信任输入法线（一次性整套点云）
         void Integrate(const std::vector<Vec3>& points,
                        const std::vector<Vec3>& normals,
                        const Vec3& origin,
-                       double weight = 1.0);
+                       double weight = 1.0,
+                       bool orient_to_origin = true);
 
         /// 只重建脏块并刷新合并网格（增量）
         void UpdateMesh();

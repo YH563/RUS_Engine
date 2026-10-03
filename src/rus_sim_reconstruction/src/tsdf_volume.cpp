@@ -74,7 +74,7 @@ namespace RusReconstruction {
 
     void TsdfVolume::Integrate(const std::vector<Vec3>& points,
                                const std::vector<Vec3>& normals,
-                               const Vec3& origin, double weight)
+                               const Vec3& origin, double weight, bool orient_to_origin)
     {
         // 点云 → TSDF：对每个点，在其「截断邻域」内的所有体素按「到切平面的有向距离」
         // 更新（splatting）。这样相邻射线之间的体素也会被填上，避免出现三角孔洞。
@@ -88,7 +88,7 @@ namespace RusReconstruction {
             Vec3 nrm = normals[i];
             if (nrm.norm() < 1e-9) continue;
             nrm.normalize();
-            if (nrm.dot(origin - p) < 0.0) nrm = -nrm;   // 朝外（自由空间为正）
+            if (orient_to_origin && nrm.dot(origin - p) < 0.0) nrm = -nrm;   // 朝外（自由空间为正）
 
             const int x0 = static_cast<int>(std::floor((p.x() - tr) / vs));
             const int x1 = static_cast<int>(std::floor((p.x() + tr) / vs));
