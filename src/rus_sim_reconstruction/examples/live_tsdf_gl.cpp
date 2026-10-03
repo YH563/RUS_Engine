@@ -43,6 +43,11 @@ void AddPlane(std::vector<SP>& o, double half, int n)
 }
 struct Camera { float yaw = 30.f, pitch = 25.f, dist = 0.9f; } g_cam;
 bool g_dragging = false; double g_lx = 0, g_ly = 0;
+bool g_flat = false;   // L 键切换：true=平涂（验证几何有无洞），false=光照
+}
+static void OnKey(GLFWwindow*, int key, int, int action, int)
+{
+    if (key == GLFW_KEY_L && action == GLFW_PRESS) g_flat = !g_flat;
 }
 static void OnMouse(GLFWwindow* w, int b, int a, int)
 {
@@ -74,6 +79,9 @@ int main()
     glfwSetMouseButtonCallback(win, OnMouse);
     glfwSetCursorPosCallback(win, OnCursor);
     glfwSetScrollCallback(win, OnScroll);
+    glfwSetKeyCallback(win, OnKey);
+    glDisable(GL_CULL_FACE);                    // 明确关闭背面剔除
+    glLightModeli(GL_LIGHT_MODEL_TWO_SIDE, 1);  // 双面光照
     glEnable(GL_DEPTH_TEST);
 
     std::vector<SP> scene;
@@ -149,14 +157,16 @@ int main()
         const auto& V = vol.MeshVertices();
         const auto& N = vol.MeshNormals();
         if (!V.empty()) {
-            const float lp[] = {0.4f, -0.6f, 1.0f, 0.0f};
-            glEnable(GL_LIGHTING); glEnable(GL_LIGHT0);
-            glLightfv(GL_LIGHT0, GL_POSITION, lp);
-            glEnable(GL_COLOR_MATERIAL);
-            glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+            if (!g_flat) {
+                const float lp[] = {0.4f, -0.6f, 1.0f, 0.0f};
+                glEnable(GL_LIGHTING); glEnable(GL_LIGHT0);
+                glLightfv(GL_LIGHT0, GL_POSITION, lp);
+                glEnable(GL_COLOR_MATERIAL);
+                glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+            }
+            glColor3f(0.72f, 0.76f, 0.82f);   // 平涂 / 单色材质
             glBegin(GL_TRIANGLES);
             for (size_t t = 0; t + 8 < V.size(); t += 9) {
-                glColor3f(0.72f, 0.76f, 0.82f);   // 单色材质 + 平滑顶点法线
                 glNormal3f(N[t], N[t + 1], N[t + 2]);
                 glVertex3f(V[t], V[t + 1], V[t + 2]);
                 glNormal3f(N[t + 3], N[t + 4], N[t + 5]);
@@ -165,7 +175,7 @@ int main()
                 glVertex3f(V[t + 6], V[t + 7], V[t + 8]);
             }
             glEnd();
-            glDisable(GL_COLOR_MATERIAL); glDisable(GL_LIGHT0); glDisable(GL_LIGHTING);
+            if (!g_flat) { glDisable(GL_COLOR_MATERIAL); glDisable(GL_LIGHT0); glDisable(GL_LIGHTING); }
         }
 
         glBegin(GL_LINES);

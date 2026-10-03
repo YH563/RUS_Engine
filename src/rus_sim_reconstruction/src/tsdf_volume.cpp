@@ -11,10 +11,11 @@ namespace RusReconstruction {
             {0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0},
             {0, 0, 1}, {1, 0, 1}, {0, 1, 1}, {1, 1, 1}
         };
-        // 立方体剖分为 6 个四面体（共享对角线 0-6）
+        // 立方体剖分为 6 个四面体（共享**体对角线** 0-7；环 1-3-2-6-4-5）。
+        // 之前误用面对角线 0-6 导致没铺满立方体、相邻块拼不上 → 满屏孔洞。
         constexpr int kTets[6][4] = {
-            {0, 5, 1, 6}, {0, 1, 2, 6}, {0, 2, 3, 6},
-            {0, 3, 7, 6}, {0, 7, 4, 6}, {0, 4, 5, 6}
+            {0, 1, 3, 7}, {0, 3, 2, 7}, {0, 2, 6, 7},
+            {0, 6, 4, 7}, {0, 4, 5, 7}, {0, 5, 1, 7}
         };
     }
 
@@ -177,10 +178,15 @@ namespace RusReconstruction {
 
         auto emit = [&](const Vec3& a, const Vec3& b, const Vec3& c) {
             Vec3 face = (b - a).cross(c - a);
-            const double nl = face.norm();
-            if (nl < 1e-12) return;
-            face /= nl;
-            const Vec3 tri[3] = {a, b, c};
+            if (face.norm() < 1e-12) return;
+            // 用 SDF 梯度（朝外）统一绕序：法线朝内的三角形翻转 → 全网格绕序一致，
+            // 开背面剔除也不会漏面。
+            Vec3 bb = b, cc = c;
+            const Vec3 ref = GradNormal((a + b + c) / 3.0);
+            if (ref.norm() > 1e-9 && face.dot(ref) < 0.0) std::swap(bb, cc);
+            face = (bb - a).cross(cc - a);
+            face.normalize();
+            const Vec3 tri[3] = {a, bb, cc};
             for (const auto& p : tri) {
                 Vec3 n = GradNormal(p);          // 逐顶点法线（TSDF 梯度）→ 平滑着色
                 if (n.norm() < 1e-9) n = face;   // 回退：面法线

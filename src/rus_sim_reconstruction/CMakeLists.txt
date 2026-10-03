@@ -13,7 +13,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 # PCL 仅用于网格化工具（Poisson），核心库与单测不链接
-find_package(PCL REQUIRED COMPONENTS common surface search io)
+find_package(PCL REQUIRED COMPONENTS common surface search io filters kdtree)
 # 实时可视化用 GLFW + GLEW（避免 PCLVisualizer/VTK 在本机的不稳定）
 find_package(PkgConfig REQUIRED)
 find_package(OpenGL REQUIRED)
@@ -37,6 +37,21 @@ install(TARGETS reconstruction_core
 )
 install(DIRECTORY include/ DESTINATION include)
 
+# ── PCL 点云预处理库（均匀重采样）──
+add_library(reconstruction_pcl SHARED src/cloud_resampler.cpp)
+target_include_directories(reconstruction_pcl PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${PCL_INCLUDE_DIRS})
+target_link_libraries(reconstruction_pcl Eigen3::Eigen ${PCL_LIBRARIES})
+install(TARGETS reconstruction_pcl LIBRARY DESTINATION lib ARCHIVE DESTINATION lib)
+
+# 重采样工具（PCD → 间距分布 → PCD）
+add_executable(rus_sim_recon_resample examples/resample_tool.cpp)
+target_include_directories(rus_sim_recon_resample PRIVATE ${PCL_INCLUDE_DIRS})
+target_link_libraries(rus_sim_recon_resample reconstruction_pcl ${PCL_LIBRARIES})
+install(TARGETS rus_sim_recon_resample DESTINATION lib/${PROJECT_NAME})
+
 # ── 离线 demo（合成场景 → PLY，供可视化对比）──
 add_executable(rus_sim_recon_demo examples/fuse_demo.cpp)
 target_link_libraries(rus_sim_recon_demo reconstruction_core)
@@ -48,6 +63,38 @@ target_include_directories(rus_sim_recon_live PRIVATE ${GLFW_INCLUDE_DIRS} ${GLE
 target_link_libraries(rus_sim_recon_live reconstruction_core
   ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} OpenGL::GL ${PCL_LIBRARIES} ${CMAKE_DL_LIBS})
 install(TARGETS rus_sim_recon_live DESTINATION lib/${PROJECT_NAME})
+
+# ── 精简版 SurfelMeshing（面元平滑+局部三角化+一致性，实时网格）──
+add_executable(rus_sim_recon_live_surfel_mesh examples/live_surfel_mesh_gl.cpp)
+target_include_directories(rus_sim_recon_live_surfel_mesh PRIVATE ${GLFW_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS})
+target_link_libraries(rus_sim_recon_live_surfel_mesh reconstruction_core
+  ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
+install(TARGETS rus_sim_recon_live_surfel_mesh DESTINATION lib/${PROJECT_NAME})
+
+# ── 面元 → 网格（GP3）──
+add_executable(rus_sim_recon_surfel_mesh examples/surfel_mesh.cpp)
+target_include_directories(rus_sim_recon_surfel_mesh PRIVATE ${PCL_INCLUDE_DIRS})
+target_link_libraries(rus_sim_recon_surfel_mesh reconstruction_core ${PCL_LIBRARIES})
+install(TARGETS rus_sim_recon_surfel_mesh DESTINATION lib/${PROJECT_NAME})
+
+# ── TSDF 网格导出（供拓扑/几何分析）──
+add_executable(rus_sim_recon_tsdf_dump examples/tsdf_dump.cpp)
+target_link_libraries(rus_sim_recon_tsdf_dump reconstruction_core)
+install(TARGETS rus_sim_recon_tsdf_dump DESTINATION lib/${PROJECT_NAME})
+
+# ── 实时管线（每帧降采样 → 增量 TSDF → 网格；无泊松）──
+add_executable(rus_sim_recon_live_pipeline examples/live_pipeline_gl.cpp)
+target_include_directories(rus_sim_recon_live_pipeline PRIVATE ${GLFW_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS})
+target_link_libraries(rus_sim_recon_live_pipeline reconstruction_core
+  ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
+install(TARGETS rus_sim_recon_live_pipeline DESTINATION lib/${PROJECT_NAME})
+
+# ── 网格查看器（加载网格 PLY 交互渲染；OpenGL，不依赖 matplotlib/VTK）──
+add_executable(rus_sim_recon_meshview examples/mesh_gl.cpp)
+target_include_directories(rus_sim_recon_meshview PRIVATE ${GLFW_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS})
+target_link_libraries(rus_sim_recon_meshview
+  ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} OpenGL::GL ${CMAKE_DL_LIBS})
+install(TARGETS rus_sim_recon_meshview DESTINATION lib/${PROJECT_NAME})
 
 # ── 实时增量网格（TSDF + Marching Tetrahedra，OpenGL；纯 Eigen，无 PCL/VTK）──
 add_executable(rus_sim_recon_live_tsdf examples/live_tsdf_gl.cpp)
@@ -110,6 +157,9 @@ if(BUILD_TESTING)
   target_link_libraries(test_surfel_map reconstruction_core)
   ament_add_gtest(test_tsdf test/test_tsdf.cpp)
   target_link_libraries(test_tsdf reconstruction_core)
+  ament_add_gtest(test_cloud_resampler test/test_cloud_resampler.cpp)
+  target_include_directories(test_cloud_resampler PRIVATE ${PCL_INCLUDE_DIRS})
+  target_link_libraries(test_cloud_resampler reconstruction_pcl ${PCL_LIBRARIES})
 endif()
 
 ament_package()
