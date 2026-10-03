@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -120,6 +121,8 @@ namespace RusReconstruction {
             mls.setSearchRadius(opt.mls_search_radius);
             mls.setPolynomialOrder(opt.mls_order);
             mls.setComputeNormals(true);
+            // MLS 默认单线程（threads_=1）；PCL 带 OpenMP，设多线程显著加速
+            mls.setNumberOfThreads(std::max(1u, std::thread::hardware_concurrency()));
             mls.setUpsamplingMethod(
                 pcl::MovingLeastSquares<pcl::PointXYZRGB, pcl::PointXYZRGBNormal>::NONE);
 
