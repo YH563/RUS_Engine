@@ -63,6 +63,7 @@ namespace rus_sim_bridge {
         void on_module_event(const ModuleEvent::SharedPtr msg);
         void on_sensor(const SensorFrame::SharedPtr msg);
         void on_mesh(const MeshFrame::SharedPtr msg);
+        void on_pcmap(const SensorFrame::SharedPtr msg);
 
         // 指令队列（WS 线程入队 / 执行器线程出队）
         std::mutex queue_mutex_;
@@ -77,12 +78,14 @@ namespace rus_sim_bridge {
         rclcpp::Subscription<ModuleEvent>::SharedPtr event_sub_;
         rclcpp::Subscription<SensorFrame>::SharedPtr sensor_sub_;
         rclcpp::Subscription<MeshFrame>::SharedPtr mesh_sub_;
+        rclcpp::Subscription<SensorFrame>::SharedPtr pcmap_sub_;
 
         WsServer ws_;
         double last_state_ts_ = -1.0;
         double state_rate_ = 0.0;
         bool forward_sensor_ = true;   // false = 不订阅感知流（/sensor 通道无数据）
         bool forward_mesh_ = true;     // false = 不订阅增量网格（/mesh 通道无数据）
+        bool forward_pcmap_ = true;    // false = 不订阅面元点云图（/pcmap 通道无数据）
     };
 
 }  // namespace rus_sim_bridge

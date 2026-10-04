@@ -90,11 +90,26 @@ namespace rus_sim_bridge {
                 std::bind(&BridgeNode::on_mesh, this, std::placeholders::_1));
         }
 
-        RCLCPP_INFO(get_logger(), "BridgeNode 已启动 ws://0.0.0.0:%d (control/state/sensor/mesh)", ws_port);
+        // ── 订阅面元点云图 → 广播到 /pcmap 覆盖式通道 ──
+        const std::string pcmap_topic =
+            declare_parameter<std::string>("pcmap_topic", "/sensor/pcmap");
+        forward_pcmap_ = declare_parameter<bool>("forward_pcmap", true);
+        if (forward_pcmap_) {
+            rclcpp::QoS pcmap_qos(1);   // 覆盖式：只要最新一帧
+            pcmap_qos.transient_local();
+            pcmap_sub_ = create_subscription<SensorFrame>(
+                pcmap_topic, pcmap_qos,
+                std::bind(&BridgeNode::on_pcmap, this, std::placeholders::_1));
+        }
+
+        RCLCPP_INFO(get_logger(),
+            "BridgeNode 已启动 ws://0.0.0.0:%d (control/state/sensor/mesh/pcmap)", ws_port);
         RCLCPP_INFO(get_logger(), "感知流：%s <- %s", forward_sensor_ ? "转发" : "关闭",
                     sensor_topic.c_str());
         RCLCPP_INFO(get_logger(), "增量网格流：%s <- %s", forward_mesh_ ? "转发" : "关闭",
                     mesh_topic.c_str());
+        RCLCPP_INFO(get_logger(), "面元点云图流：%s <- %s", forward_pcmap_ ? "转发" : "关闭",
+                    pcmap_topic.c_str());
     }
 
     // ================================================================
@@ -255,6 +270,31 @@ namespace rus_sim_bridge {
         RCLCPP_DEBUG(get_logger(), "网格帧 seq=%u scope=%s 块=%zu payload=%zuB → /mesh",
                      msg->seq, f.scope.c_str(), f.chunks.size(), f.payload.size());
         ws_.BroadcastMesh(RusUtils::EncodeMeshFrame(f));
+    }
+
+    // ================================================================
+    //  面元点云图流（reconstruction → bridge → 前端 /pcmap 覆盖式通道）
+    // ================================================================
+
+    void BridgeNode::on_pcmap(const SensorFrame::SharedPtr msg) {
+        // 与 on_sensor 同构：面元地图是标准 SensorFrame（type=pointcloud, scope=map）
+        RusUtils::SensorFrame f;
+        f.type = sensor_type_name(msg->type);
+        f.timestamp = rclcpp::Time(msg->stamp).seconds();
+        f.seq = msg->seq;
+        f.frame_id = msg->frame_id;
+        f.encoding = msg->encoding;
+        f.scope = msg->scope;
+        f.points = msg->points;
+        f.fields = msg->fields;
+        f.dtype = msg->dtype;
+        f.range_min = msg->range_min;
+        f.range_max = msg->range_max;
+        f.payload = msg->data;
+
+        RCLCPP_DEBUG(get_logger(), "面元图 seq=%u scope=%s points=%u payload=%zuB → /pcmap",
+                     msg->seq, f.scope.c_str(), msg->points, f.payload.size());
+        ws_.BroadcastPcMap(RusUtils::EncodeSensorFrame(f));
     }
 
 }  // namespace rus_sim_bridge

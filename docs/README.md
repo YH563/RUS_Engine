@@ -103,7 +103,8 @@ ros2 run rus_sim_recorder rus_sim_recorder_inspect records/run_*.rusrec --check-
 | `/preprocessed_cloud` | `PointCloud2` | perception → planning | 地图快照或当前帧（规划输入） |
 | `/perception/frame` | `PointCloud2` | perception → RViz | 当前处理帧 |
 | `/sensor/pointcloud` | `SensorFrame` | perception → bridge / recorder | zstd + int16 量化压缩帧 |
-| `/sensor/mesh` | `MeshFrame` | reconstruction → bridge | 增量 TSDF 网格块（`/mesh` 通道） |
+| `/sensor/pcmap` | `SensorFrame` | reconstruction → bridge | 面元融合点云地图（`/pcmap` 通道，scope=map） |
+| `/sensor/mesh` | `MeshFrame` | reconstruction → bridge | 增量 TSDF 网格块（`/mesh` 通道，默认关） |
 | `/planned_trajectory` | `geometry_msgs/PoseArray` | planning → RViz | 规划轨迹调试可视化 |
 | `/module_events` | `ModuleEvent` | planning → bridge | 子模块事件上报（replayer 已废弃） |
 | `/driver/command` | `CommandService` | bridge / planning → driver | 驱动指令 |
@@ -111,7 +112,7 @@ ros2 run rus_sim_recorder rus_sim_recorder_inspect records/run_*.rusrec --check-
 | `/perception/command` | `CommandService` | bridge → perception | 感知指令 |
 | `/recorder/command` | `CommandService` | bridge → recorder | 录制开关（3 条 `recorder_*`） |
 | `/replayer/command` | `CommandService` | bridge → replayer | ❌ 已废弃（回放移交前端），暂留过渡 |
-| WS `/control` `/state` `/sensor` `/mesh` | WebSocket | 前端 ⇄ bridge | 见 [WsProtocol.md](./Protocol/WsProtocol.md) |
+| WS `/control` `/state` `/sensor` `/pcmap` `/mesh` | WebSocket | 前端 ⇄ bridge | 见 [WsProtocol.md](./Protocol/WsProtocol.md) |
 
 ## 文档维护约定
 

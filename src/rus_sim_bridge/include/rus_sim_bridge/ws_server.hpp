@@ -92,6 +92,10 @@ namespace rus_sim_bridge {
          */
         void BroadcastMesh(std::vector<uint8_t> frame);
 
+        /// 向所有 /pcmap 连接推送最新面元点云图（**覆盖式**：只保留最新一帧，可丢帧）。
+        /// 面元地图是全量快照（`SensorFrame`，type=pointcloud，scope=map），语义同 /sensor。
+        void BroadcastPcMap(std::vector<uint8_t> frame);
+
         // libwebsockets 协议回调（公开给 C 回调）
         static int ws_callback(lws* wsi, lws_callback_reasons reason,
                                void* user, void* in, size_t len);
@@ -105,6 +109,7 @@ namespace rus_sim_bridge {
             uint64_t sensor_sent_gen = 0;  // 本会话已发送的感知帧代次（0 = 尚未发过）
             uint64_t mesh_sent_id = 0;     // /mesh 可靠队列：本会话下一个要发的帧 id
             bool     mesh_init = false;    // 是否已初始化 mesh 游标
+            uint64_t pcmap_sent_gen = 0;   // 本会话已发送的面元点云图代次（0 = 尚未发过）
         };
 
         void enqueue_session(uint64_t session_id, const std::string& json);
@@ -137,6 +142,11 @@ namespace rus_sim_bridge {
         std::deque<std::vector<uint8_t>> mesh_queue_;
         uint64_t mesh_first_id_ = 0;
         size_t mesh_queue_cap_ = 256;
+
+        // 面元点云图（覆盖式单槽）：同 sensor 语义
+        std::mutex pcmap_mutex_;
+        std::shared_ptr<const std::vector<uint8_t>> last_pcmap_frame_;
+        uint64_t pcmap_gen_ = 0;
 
         // 会话登记（wsi → 信息 / id → wsi / id → 待推送）
         mutable std::mutex registry_mutex_;

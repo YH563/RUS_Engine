@@ -102,7 +102,7 @@ string[] strings     # 文本结果（如录音文件清单）
 | 消息 / 服务 | 发布 / 服务端 | 订阅 / 调用端 |
 |-------------|--------------|--------------|
 | `RobotState` | driver | bridge、planning、perception、recorder |
-| `SensorFrame` | perception | bridge、recorder |
+| `SensorFrame` | perception（`/sensor/pointcloud`）、reconstruction（`/sensor/pcmap` 面元点云图） | bridge、recorder |
 | `MeshFrame` / `MeshChunkMeta` | reconstruction | bridge |
 | `ModuleEvent` | planning（~~replayer~~ 已废弃） | bridge |
 | `CommandService` | driver / planning / perception / recorder（~~replayer~~ 已废弃） | bridge（+ planning → driver） |

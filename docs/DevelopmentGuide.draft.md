@@ -32,7 +32,7 @@
 
 | 节点名 | 可执行文件 | 关键对外接口 |
 |--------|-----------|-------------|
-| `bridge_node` | `ros2 run rus_sim_bridge rus_sim_bridge_node` | ws://0.0.0.0:8765（路径 `/control` `/state` `/sensor` `/mesh`） |
+| `bridge_node` | `ros2 run rus_sim_bridge rus_sim_bridge_node` | ws://0.0.0.0:8765（路径 `/control` `/state` `/sensor` `/pcmap` `/mesh`） |
 | `driver_node` | `ros2 run rus_sim_driver rus_sim_driver_node` | 服务 `/driver/command`；话题 `/driver/state`、`/joint_states` |
 | `planning_node` | `ros2 run rus_sim_planning rus_sim_planning_node` | 服务 `/planning/command`；话题 `/planned_trajectory` |
 | `perception_node` | `ros2 run rus_sim_perception rus_sim_perception_node` | 服务 `/perception/command`；话题 `/preprocessed_cloud`、`/perception/frame`、`/sensor/pointcloud` |

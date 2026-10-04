@@ -10,6 +10,13 @@ bridge_node:
     sensor_topic: "/sensor/pointcloud"
     # 是否转发感知流到 WS /sensor 二进制通道（false = 不订阅，通道无数据）
     forward_sensor: true
+    # 增量网格流数据源 topic（rus_sim_interfaces/msg/MeshFrame）
+    mesh_topic: "/sensor/mesh"
+    forward_mesh: true
+    # 面元点云图数据源 topic（rus_sim_interfaces/msg/SensorFrame，融合地图快照）
+    #   → WS /pcmap 覆盖式通道
+    pcmap_topic: "/sensor/pcmap"
+    forward_pcmap: true
     # 下游服务调用超时（毫秒），超时回复 failure
     timeout_ms: 5000
     # 指令队列出队周期（毫秒）

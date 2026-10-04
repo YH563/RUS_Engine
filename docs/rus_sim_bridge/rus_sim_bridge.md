@@ -4,7 +4,7 @@
 
 ## 功能概述
 
-- ✅ WS 四通道：`/control`（指令 / 回执 / 事件）、`/state`（机械臂状态流）、`/sensor`（压缩点云流）、`/mesh`（增量网格块流，可靠有序）
+- ✅ WS 五通道：`/control`（指令 / 回执 / 事件）、`/state`（机械臂状态流）、`/sensor`（感知压缩点云流）、`/pcmap`（面元融合点云图，覆盖式）、`/mesh`（增量网格块流，可靠有序）
 - ✅ 指令路由表 + 多模块扇出 + 超时回执聚合（纯转发，无业务逻辑）
 - ✅ 模式切换：自动（默认，planning 协调）/ 手动（直控 driver）
 - ✅ 事件桥接：`/module_events` → `/control` 广播
@@ -41,10 +41,11 @@ rus_sim_bridge/
 | 输入（WS） | `/control` | JSON `command` | `{ id, cmd, args }` |
 | 输入（话题） | `/driver/state` | `RobotState` | → `/state` JSON 流（附实算 `frame_rate`） |
 | 输入（话题） | `/sensor/pointcloud` | `SensorFrame` | → `/sensor` 二进制帧（`uint32` 头长 + JSON 头 + payload） |
-| 输入（话题） | `/sensor/mesh` | `MeshFrame` | → `/mesh` 二进制帧（增量网格块，可靠有序） |
+| 输入（话题） | `/sensor/pcmap` | `SensorFrame` | → `/pcmap` 二进制帧（面元融合点云图，覆盖式） |
+| 输入（话题） | `/sensor/mesh` | `MeshFrame` | → `/mesh` 二进制帧（增量网格块，可靠有序；默认关） |
 | 输入（话题） | `/module_events` | `ModuleEvent` | → `event` 广播到所有 `/control` 连接 |
 | 输出（WS） | `/control` | `reply` / `event` | 回执只发发起连接；事件广播 |
-| 输出（WS） | `/state` / `/sensor` | JSON / binary | 覆盖式：只推最新一帧，慢客户端丢帧 |
+| 输出（WS） | `/state` / `/sensor` / `/pcmap` | JSON / binary | 覆盖式：只推最新一帧，慢客户端丢帧 |
 | 输出（WS） | `/mesh` | binary | **可靠有序队列**：逐会话按序入队，不丢块（溢出跳帧，靠后端周期性全量快照重同步） |
 
 ### 下游服务调用（CommandService）
@@ -79,6 +80,8 @@ rus_sim_bridge/
 | `forward_sensor` | bool | true | false = 不订阅感知流（`/sensor` 通道无数据） |
 | `mesh_topic` | string | `/sensor/mesh` | 增量网格流数据源 |
 | `forward_mesh` | bool | true | false = 不订阅网格流（`/mesh` 通道无数据） |
+| `pcmap_topic` | string | `/sensor/pcmap` | 面元点云图数据源 |
+| `forward_pcmap` | bool | true | false = 不订阅面元点云图（`/pcmap` 通道无数据） |
 | `timeout_ms` | int | 5000 | 下游服务调用超时（毫秒） |
 | `drain_ms` | int | 10 | 指令队列出队周期（毫秒） |
 

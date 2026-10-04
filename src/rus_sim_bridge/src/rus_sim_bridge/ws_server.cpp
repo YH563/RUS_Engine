@@ -32,6 +32,8 @@ namespace rus_sim_bridge {
           .per_session_data_size = sizeof(PerSessionData), .rx_buffer_size = 4096 },
         { .name = "mesh", .callback = WsServer::ws_callback,
           .per_session_data_size = sizeof(PerSessionData), .rx_buffer_size = 4096 },
+        { .name = "pcmap", .callback = WsServer::ws_callback,
+          .per_session_data_size = sizeof(PerSessionData), .rx_buffer_size = 4096 },
         { nullptr, nullptr, 0, 0 }  // 终止
     };
 
@@ -72,7 +74,7 @@ namespace rus_sim_bridge {
                 if (context_) {
                     port_ = p;
                     log_msg(0, "已启动 ws://0.0.0.0:" + std::to_string(p) +
-                               "  (路径 /control /state /sensor /mesh)");
+                               "  (路径 /control /state /sensor /mesh /pcmap)");
                     break;
                 }
                 log_msg(1, "端口 " + std::to_string(p) + " 不可用，尝试下一个...");
@@ -138,6 +140,16 @@ namespace rus_sim_bridge {
         if (context_) lws_cancel_service(context_.get());  // 唤醒事件循环
     }
 
+    void WsServer::BroadcastPcMap(std::vector<uint8_t> frame) {
+        if (!running_.load() || frame.empty()) return;
+        {
+            std::lock_guard lock(pcmap_mutex_);
+            last_pcmap_frame_ = std::make_shared<const std::vector<uint8_t>>(std::move(frame));
+            ++pcmap_gen_;
+        }
+        if (context_) lws_cancel_service(context_.get());
+    }
+
     void WsServer::BroadcastMesh(std::vector<uint8_t> frame) {
         if (!running_.load() || frame.empty()) return;
         {
@@ -179,6 +191,12 @@ namespace rus_sim_bridge {
             sensor_gen = sensor_gen_;
         }
 
+        uint64_t pcmap_gen = 0;
+        {
+            std::lock_guard lock(pcmap_mutex_);
+            pcmap_gen = pcmap_gen_;
+        }
+
         uint64_t mesh_last_id = 0;
         {
             std::lock_guard lock(mesh_mutex_);
@@ -194,6 +212,9 @@ namespace rus_sim_bridge {
                         to_wake.push_back(wsi);
                 } else if (info.channel == Channel::Sensor) {
                     if (sensor_gen != 0 && info.sensor_sent_gen != sensor_gen)
+                        to_wake.push_back(wsi);
+                } else if (info.channel == Channel::PcMap) {
+                    if (pcmap_gen != 0 && info.pcmap_sent_gen != pcmap_gen)
                         to_wake.push_back(wsi);
                 } else if (info.channel == Channel::Mesh) {
                     if (!info.mesh_init || info.mesh_sent_id < mesh_last_id)
@@ -232,10 +253,12 @@ namespace rus_sim_bridge {
                 if (strstr(uri, "/state"))       ch = Channel::State;
                 else if (strstr(uri, "/sensor")) ch = Channel::Sensor;
                 else if (strstr(uri, "/mesh"))   ch = Channel::Mesh;
+                else if (strstr(uri, "/pcmap"))  ch = Channel::PcMap;
             } else if (proto_name) {
                 if (!strcmp(proto_name, "state"))       ch = Channel::State;
                 else if (!strcmp(proto_name, "sensor")) ch = Channel::Sensor;
                 else if (!strcmp(proto_name, "mesh"))   ch = Channel::Mesh;
+                else if (!strcmp(proto_name, "pcmap"))  ch = Channel::PcMap;
             }
 
             {
@@ -297,6 +320,7 @@ namespace rus_sim_bridge {
             uint64_t session_id = 0;
             uint64_t sent_state_gen = 0;
             uint64_t sent_sensor_gen = 0;
+            uint64_t sent_pcmap_gen = 0;
             Channel ch = Channel::Control;
             {
                 std::lock_guard lock(server->registry_mutex_);
@@ -306,6 +330,7 @@ namespace rus_sim_bridge {
                     ch = it->second.channel;
                     sent_state_gen = it->second.state_sent_gen;
                     sent_sensor_gen = it->second.sensor_sent_gen;
+                    sent_pcmap_gen = it->second.pcmap_sent_gen;
                 }
             }
 
@@ -363,6 +388,29 @@ namespace rus_sim_bridge {
                 std::lock_guard lock(server->registry_mutex_);
                 auto it = server->sessions_.find(wsi);
                 if (it != server->sessions_.end()) it->second.sensor_sent_gen = gen;
+                return 0;
+            }
+
+            if (ch == Channel::PcMap) {
+                // 面元点云图（覆盖式：只发最新一帧），语义同 /sensor
+                std::shared_ptr<const std::vector<uint8_t>> frame;
+                uint64_t gen = 0;
+                {
+                    std::lock_guard lock(server->pcmap_mutex_);
+                    frame = server->last_pcmap_frame_;
+                    gen = server->pcmap_gen_;
+                }
+                if (!frame || frame->empty() || gen == 0 || sent_pcmap_gen == gen) return 0;
+                if (lws_send_pipe_choked(wsi)) return 0;
+
+                std::vector<unsigned char> buf(LWS_PRE + frame->size());
+                std::memcpy(buf.data() + LWS_PRE, frame->data(), frame->size());
+                int n = lws_write(wsi, buf.data() + LWS_PRE, frame->size(), LWS_WRITE_BINARY);
+                if (n < 0) return -1;
+
+                std::lock_guard lock(server->registry_mutex_);
+                auto it = server->sessions_.find(wsi);
+                if (it != server->sessions_.end()) it->second.pcmap_sent_gen = gen;
                 return 0;
             }
 

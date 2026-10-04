@@ -20,6 +20,7 @@ namespace RusUtils {
         inline constexpr std::string_view kState   = "/state";    // state 高频流（可丢帧）
         inline constexpr std::string_view kSensor  = "/sensor";   // 感知二进制帧（可丢帧）
         inline constexpr std::string_view kMesh    = "/mesh";     // 增量网格块（可靠有序队列）
+        inline constexpr std::string_view kPcMap   = "/pcmap";    // 面元点云图（融合地图快照，覆盖式）
     }
 
     // ── 指令名（统一平铺） ──

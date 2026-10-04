@@ -77,7 +77,9 @@ perception_node:
     #   实测沉淀速率 199 点/帧 ≈ 1194 点/秒，几分钟后地图被噪声填满，视觉上就是
     #   "一大堆散乱点"；而单帧模式下点数恒定（实测 22.6 万，连续 52 帧零增长）。
     #   需要在前端看"建图累积效果"时，再临时改成 "map"。
-    sensor_scope: "frame"
+    # ◀ 当前设为 map：前端 `_sensor` 通道发**累积建图快照**（scope=map，2s 一次）；
+    #   要看单帧对比就改回 "frame"。
+    sensor_scope: "map"
 
     # ── 时间对齐 / 调度参数 ──
     # 点云用采集时刻（RealSense 直连 = node->now()；话题源 = header.stamp），

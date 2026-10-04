@@ -15,6 +15,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
 #include "rus_sim_interfaces/msg/mesh_frame.hpp"
+#include "rus_sim_interfaces/msg/sensor_frame.hpp"
 #include "rus_sim_reconstruction/sharded_surfel_map.hpp"
 #include "rus_sim_reconstruction/tsdf_volume.hpp"
 
@@ -28,15 +29,18 @@ namespace RusReconstruction {
         void OnCloud(sensor_msgs::msg::PointCloud2::SharedPtr msg);
         void PublishReconstruction();
         void PublishMesh();
+        void PublishPcMap();
 
         std::unique_ptr<ShardedSurfelMap> map_;
-        std::unique_ptr<TsdfVolume> tsdf_;   // 增量网格（按块 upsert/remove）
+        std::unique_ptr<TsdfVolume> tsdf_;   // 增量网格（按块 upsert/remove；enable_mesh 时才积分/发布）
 
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
-        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_;              // /reconstructed_cloud
+        rclcpp::Publisher<rus_sim_interfaces::msg::SensorFrame>::SharedPtr pcmap_pub_; // 面元点云图（前端）
         rclcpp::Publisher<rus_sim_interfaces::msg::MeshFrame>::SharedPtr mesh_pub_;
         rclcpp::TimerBase::SharedPtr timer_;
         rclcpp::TimerBase::SharedPtr mesh_timer_;
+        rclcpp::TimerBase::SharedPtr pcmap_timer_;
 
         std::string input_topic_;
         std::string output_topic_;
@@ -46,8 +50,15 @@ namespace RusReconstruction {
         int normal_k_ = 10;
         std::string save_pcd_;   // 非空则每次发布时落盘该 PCD（测试用）
 
-        // 增量网格
-        bool enable_mesh_ = true;
+        // ── 面元点云图（前端 /pcmap 通道；点云图 = 融合后的面元，去噪/带置信度）──
+        std::string pcmap_topic_;
+        double pcmap_period_ = 1.0;          // 发布周期（秒）
+        float  pcmap_min_confidence_ = 2.0f; // 只发置信度 ≥ 此值的面元
+        bool   pcmap_compress_ = true;       // payload zstd 压缩
+        uint32_t pcmap_seq_ = 0;
+
+        // ── 增量网格（默认关；前端当前只收面元点云）──
+        bool enable_mesh_ = false;
         std::string mesh_topic_;
         double mesh_period_ = 0.3;         // 增量块发布周期（秒）
         double mesh_full_period_ = 5.0;    // 全量重同步周期（秒）

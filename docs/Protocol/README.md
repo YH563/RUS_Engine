@@ -7,7 +7,7 @@
 
 | 文档 | 版本 | 管什么 |
 |------|------|--------|
-| [WsProtocol.md](./WsProtocol.md) | v0.4 | 前端 ⇄ bridge 的 WebSocket 协议：四通道（`/control` `/state` `/sensor` `/mesh`）、`command` / `reply` / `event`、`state` / `sensor` / `mesh` 线格式、指令清单、事件清单、扫查时序、前端实现要点 |
+| [WsProtocol.md](./WsProtocol.md) | v0.4 | 前端 ⇄ bridge 的 WebSocket 协议：五通道（`/control` `/state` `/sensor` `/pcmap` `/mesh`）、`command` / `reply` / `event`、`state` / `sensor` / `pcmap` / `mesh` 线格式、指令清单、事件清单、扫查时序、前端实现要点 |
 | [RecFormat.md](./RecFormat.md) | v1 | `.rusrec` 记录文件：整体布局、FileHeader、通道表、记录、尾索引、读取流程、录制开关口径、容量估算（回放已移交前端） |
 
 ## 速查
@@ -19,6 +19,7 @@
 | `/control` | `command` / `reply` / `event` | 可靠（id 关联回执） |
 | `/state` | 机械臂状态高频流 | 可丢帧（只发最新值） |
 | `/sensor` | 感知二进制帧（压缩点云） | 可丢帧（只发最新一帧） |
+| `/pcmap` | 面元点云图（融合地图快照，同 `/sensor` 线格式） | 可丢帧（只发最新一帧） |
 | `/mesh` | 增量网格块帧 | 可靠有序（不丢块） |
 
 ### 模块服务（bridge 调用，均为 `CommandService`）
@@ -55,6 +56,7 @@
 
 // 状态流（/state）：type / timestamp / frame_rate / joint_pos… / flange_pos / tool_index / tool_pose
 // 感知流（/sensor）：uint32 LE 头长 + JSON 头 + 二进制 payload（zstd + int16 量化）
+// 面元点云图（/pcmap）：线格式同 /sensor（SensorFrame: type=pointcloud, scope=map）
 // 网格流（/mesh）：uint32 LE 头长 + JSON 头(chunks[]) + payload（int16 顶点 + int8 法线 + zstd）
 // 记录文件：64 B FileHeader + ChannelDesc[] + (40 B RecHeader + payload)* + IndexEntry[] + 32 B Footer
 ```

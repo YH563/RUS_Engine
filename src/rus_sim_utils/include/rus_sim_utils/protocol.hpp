@@ -35,6 +35,7 @@ namespace RusUtils {
         State,     // /state    state 高频流（可丢帧）
         Sensor,    // /sensor   感知二进制帧（可丢帧）
         Mesh,      // /mesh     增量网格块（可靠有序二进制队列）
+        PcMap,     // /pcmap    面元点云图（融合地图快照，覆盖式）
     };
 
     /// 通道名（lws 子协议名 / 前端连接路径）
@@ -44,6 +45,7 @@ namespace RusUtils {
             case Channel::State:   return WsPath::kState;
             case Channel::Sensor:  return WsPath::kSensor;
             case Channel::Mesh:    return WsPath::kMesh;
+            case Channel::PcMap:   return WsPath::kPcMap;
         }
         return WsPath::kControl;
     }

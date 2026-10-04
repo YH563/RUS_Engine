@@ -19,8 +19,14 @@ reconstruction_node:
     # 默认 (0,0,0) = 以机械臂基座为视角，扫描面朝外时基本可用。
     sensor_origin: [0.0, 0.0, 0.0]
 
-    # 增量网格（/mesh 通道）
-    enable_mesh: true
+    # 面元点云图（前端 /pcmap 通道；融合后的面元，去噪/带置信度）
+    pcmap_topic: "/sensor/pcmap"
+    pcmap_period: 1.0            # 发布周期（秒）
+    pcmap_min_confidence: 2.0    # 只发观测次数 ≥ 此值的面元（滤碎面元）
+    pcmap_compress: true         # payload zstd 压缩
+
+    # 增量网格（/mesh 通道）—— 默认关：前端当前只收面元点云图
+    enable_mesh: false
     mesh_topic: "/sensor/mesh"
     tsdf_voxel_size: 0.006   # TSDF 体素边长（米）
     tsdf_truncation: 0.018   # 截断距离（米）

@@ -1,6 +1,9 @@
 #include "rus_sim_reconstruction/reconstruction_node.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstring>
 #include <vector>
 
 #include <zstd.h>
@@ -46,8 +49,15 @@ namespace RusReconstruction {
         opt.voxel_size = voxel;
         map_ = std::make_unique<ShardedSurfelMap>(opt, shards, threads);
 
-        // ── 增量网格（/mesh）──
-        enable_mesh_ = declare_parameter<bool>("enable_mesh", true);
+        // ── 面元点云图（前端 /pcmap 通道；点云图 = 融合面元，去噪/带置信度）──
+        pcmap_topic_ = declare_parameter<std::string>("pcmap_topic", "/sensor/pcmap");
+        pcmap_period_ = declare_parameter<double>("pcmap_period", 1.0);
+        pcmap_min_confidence_ = static_cast<float>(
+            declare_parameter<double>("pcmap_min_confidence", 2.0));
+        pcmap_compress_ = declare_parameter<bool>("pcmap_compress", true);
+
+        // ── 增量网格（/mesh，默认关：前端当前只收面元点云）──
+        enable_mesh_ = declare_parameter<bool>("enable_mesh", false);
         mesh_topic_ = declare_parameter<std::string>("mesh_topic", "/sensor/mesh");
         mesh_period_ = declare_parameter<double>("mesh_period", 0.3);
         mesh_full_period_ = declare_parameter<double>("mesh_full_period", 5.0);
@@ -68,6 +78,14 @@ namespace RusReconstruction {
         timer_ = create_wall_timer(std::chrono::duration<double>(publish_period_),
             std::bind(&ReconstructionNode::PublishReconstruction, this));
 
+        // 面元点云图：SensorFrame（点云 wire 格式，前端复用 /sensor 解码）→ bridge /pcmap 通道
+        {
+            auto pqos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+            pcmap_pub_ = create_publisher<rus_sim_interfaces::msg::SensorFrame>(pcmap_topic_, pqos);
+            pcmap_timer_ = create_wall_timer(std::chrono::duration<double>(pcmap_period_),
+                std::bind(&ReconstructionNode::PublishPcMap, this));
+        }
+
         if (enable_mesh_) {
             auto mqos = rclcpp::QoS(rclcpp::KeepLast(8)).reliable();
             mesh_pub_ = create_publisher<rus_sim_interfaces::msg::MeshFrame>(mesh_topic_, mqos);
@@ -78,6 +96,10 @@ namespace RusReconstruction {
         RCLCPP_INFO(get_logger(), "重建节点启动：输入=%s 输出=%s voxel=%.4fm shards=%d 法线估计=%d",
                     input_topic_.c_str(), output_topic_.c_str(), voxel, shards,
                     estimate_normals_ ? 1 : 0);
+        RCLCPP_INFO(get_logger(),
+                    "面元点云图：话题=%s 周期=%.1fs min_conf=%.1f 压缩=%d（前端 /pcmap）",
+                    pcmap_topic_.c_str(), pcmap_period_, pcmap_min_confidence_,
+                    pcmap_compress_ ? 1 : 0);
         RCLCPP_INFO(get_logger(),
                     "增量网格：enable=%d 话题=%s tsdf=%.4fm/trunc%.4f 周期=%.2fs 全量=%.1fs 压缩=%d",
                     enable_mesh_ ? 1 : 0, mesh_topic_.c_str(), topt.voxel_size, topt.truncation,
@@ -170,6 +192,71 @@ namespace RusReconstruction {
             static_cast<unsigned long long>(points_in_),
             static_cast<unsigned long long>(frames_dropped_),
             map_->SurfaceCount(), min_confidence_, surfels.size());
+    }
+
+    void ReconstructionNode::PublishPcMap()
+    {
+        auto surfels = map_->Snapshot(pcmap_min_confidence_);
+        if (surfels.empty()) return;
+
+        // 包围盒 + 量化打包（int16 xyz + uint32 rgb，10 字节/点；与感知 /sensor 点云格式一致，
+        // 前端可复用同一解码路径）
+        double mn[3] = {1e300, 1e300, 1e300};
+        double mx[3] = {-1e300, -1e300, -1e300};
+        for (const auto& s : surfels) {
+            mn[0] = std::min(mn[0], s.position.x()); mx[0] = std::max(mx[0], s.position.x());
+            mn[1] = std::min(mn[1], s.position.y()); mx[1] = std::max(mx[1], s.position.y());
+            mn[2] = std::min(mn[2], s.position.z()); mx[2] = std::max(mx[2], s.position.z());
+        }
+        double range[3];
+        for (int a = 0; a < 3; ++a) {
+            if (mx[a] - mn[a] < 0.001) mx[a] = mn[a] + 0.001;   // 退化范围补 1mm
+            range[a] = mx[a] - mn[a];
+        }
+
+        auto quant = [](double v, double m, double r) -> int16_t {
+            double q = (v - m) * (65535.0 / r) - 32768.0;
+            if (q < -32768.0) q = -32768.0;
+            if (q > 32767.0) q = 32767.0;
+            return static_cast<int16_t>(std::lround(q));
+        };
+
+        std::vector<uint8_t> raw;
+        raw.reserve(surfels.size() * 10);
+        for (const auto& s : surfels) {
+            uint8_t b[10];
+            const int16_t qx = quant(s.position.x(), mn[0], range[0]);
+            const int16_t qy = quant(s.position.y(), mn[1], range[1]);
+            const int16_t qz = quant(s.position.z(), mn[2], range[2]);
+            const uint32_t c = s.color & 0x00FFFFFFu;
+            std::memcpy(b, &qx, 2); std::memcpy(b + 2, &qy, 2);
+            std::memcpy(b + 4, &qz, 2); std::memcpy(b + 6, &c, 4);
+            raw.insert(raw.end(), b, b + 10);
+        }
+        std::string encoding = "raw";
+        if (pcmap_compress_) {
+            std::vector<uint8_t> comp;
+            if (ZstdCompress(raw, comp)) { raw.swap(comp); encoding = "zstd"; }
+        }
+
+        rus_sim_interfaces::msg::SensorFrame msg;
+        msg.type = rus_sim_interfaces::msg::SensorFrame::TYPE_POINTCLOUD;
+        msg.encoding = encoding;
+        msg.stamp = now();
+        msg.seq = pcmap_seq_++;
+        msg.frame_id = "base_link";
+        msg.scope = std::string(RusUtils::SensorScope::kMap);
+        msg.points = static_cast<uint32_t>(surfels.size());
+        msg.fields = {"x", "y", "z", "rgb"};
+        msg.dtype = "int16";
+        msg.range_min = {mn[0], mn[1], mn[2]};
+        msg.range_max = {mx[0], mx[1], mx[2]};
+        msg.data = std::move(raw);
+        pcmap_pub_->publish(msg);
+
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+            "面元点云图：%zu 面元 payload=%zu B enc=%s → %s",
+            surfels.size(), msg.data.size(), encoding.c_str(), pcmap_topic_.c_str());
     }
 
     void ReconstructionNode::PublishMesh()
