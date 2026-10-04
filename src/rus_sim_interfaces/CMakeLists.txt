@@ -19,6 +19,8 @@ set(msg_files
   "msg/RobotState.msg"
   "msg/ModuleEvent.msg"
   "msg/SensorFrame.msg"
+  "msg/MeshChunkMeta.msg"
+  "msg/MeshFrame.msg"
 )
 set(srv_files
   "srv/CommandService.srv"

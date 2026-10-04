@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -79,6 +80,18 @@ namespace rus_sim_bridge {
          */
         void BroadcastSensor(std::vector<uint8_t> frame);
 
+        /**
+         * @brief 向所有 /mesh 连接推送一条增量网格帧（**可靠有序队列**，不丢）
+         *
+         * 与 /sensor 不同：增量块/`remove` 一旦丢失会让前端网格腐化，因此逐会话
+         * 按序入队、按序发送。队列有上限（`mesh_queue_cap_`）；慢客户端落后超出窗口
+         * 时跳过丢失的帧，靠后端周期性 `scope="map"` 全量快照重同步（见 reconstruction_node）。
+         *
+         * @param frame 完整一帧的线格式字节（`uint32 LE 头长 + JSON 头 + payload`，
+         *              见 RusUtils::EncodeMeshFrame）。一帧 = 一条 WS 二进制消息。
+         */
+        void BroadcastMesh(std::vector<uint8_t> frame);
+
         // libwebsockets 协议回调（公开给 C 回调）
         static int ws_callback(lws* wsi, lws_callback_reasons reason,
                                void* user, void* in, size_t len);
@@ -90,6 +103,8 @@ namespace rus_sim_bridge {
             RusUtils::Channel channel = RusUtils::Channel::Control;
             uint64_t state_sent_gen = 0;   // 本会话已推送的状态代次（0 = 尚未推送）
             uint64_t sensor_sent_gen = 0;  // 本会话已发送的感知帧代次（0 = 尚未发过）
+            uint64_t mesh_sent_id = 0;     // /mesh 可靠队列：本会话下一个要发的帧 id
+            bool     mesh_init = false;    // 是否已初始化 mesh 游标
         };
 
         void enqueue_session(uint64_t session_id, const std::string& json);
@@ -114,6 +129,14 @@ namespace rus_sim_bridge {
         std::mutex sensor_mutex_;
         std::shared_ptr<const std::vector<uint8_t>> last_sensor_frame_;
         uint64_t sensor_gen_ = 0;
+
+        // 网格流（可靠有序队列）：deque 里是尚未被所有会话消费的帧；每会话一个游标
+        // mesh_sent_id。id 单调，front 的 id = mesh_first_id_。队列超上限丢最旧（慢客户端
+        // 跳过 + 靠周期性全量快照重同步）。
+        std::mutex mesh_mutex_;
+        std::deque<std::vector<uint8_t>> mesh_queue_;
+        uint64_t mesh_first_id_ = 0;
+        size_t mesh_queue_cap_ = 256;
 
         // 会话登记（wsi → 信息 / id → wsi / id → 待推送）
         mutable std::mutex registry_mutex_;

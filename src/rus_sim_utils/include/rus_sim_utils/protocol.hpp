@@ -13,6 +13,7 @@
 //  依赖：command_defs.hpp（通道路径 / 事件名 / 帧类型常量）
 // ════════════════════════════════════════════════════════════════════
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <sstream>
@@ -33,6 +34,7 @@ namespace RusUtils {
         Control,   // /control  command / reply / event（可靠）
         State,     // /state    state 高频流（可丢帧）
         Sensor,    // /sensor   感知二进制帧（可丢帧）
+        Mesh,      // /mesh     增量网格块（可靠有序二进制队列）
     };
 
     /// 通道名（lws 子协议名 / 前端连接路径）
@@ -41,6 +43,7 @@ namespace RusUtils {
             case Channel::Control: return WsPath::kControl;
             case Channel::State:   return WsPath::kState;
             case Channel::Sensor:  return WsPath::kSensor;
+            case Channel::Mesh:    return WsPath::kMesh;
         }
         return WsPath::kControl;
     }
@@ -152,6 +155,43 @@ namespace RusUtils {
 
         // ── payload ──
         std::vector<uint8_t> payload;
+    };
+
+    // ════════════════════════════════════════════════════════════════
+    //  通路 B：增量网格帧（/mesh 通道，可靠有序）
+    //  ────────────────────────────────────────────────────────────────
+    //  线格式同感知帧：uint32 LE 头长度 + JSON 头 + 二进制 payload。
+    //  头：type="mesh" / timestamp / seq / frame_id / encoding / scope + chunks[]。
+    //  payload：按 chunks 顺序拼接——每个 upsert 块为
+    //     int16 pos[Nv*3]（块局部，range_min/max 反量化）
+    //     + int8 normal[Nv*3]（has_normals 时，单位向量 ×127）。
+    //     三角汤 + 隐式顺序索引（Nv = 3*tris，线上不发索引缓冲）。
+    //  remove 块（kind="remove"）无 payload。
+    // ════════════════════════════════════════════════════════════════
+    struct MeshChunkMeta {
+        enum Kind { kUpsert = 0, kRemove = 1 };
+        int64_t  id = 0;                  // 稳定块 id（后端 PackChunkId）
+        int      kind = kUpsert;          // Kind
+        double   origin[3] = {0, 0, 0};   // 块世界原点（顶点点为块局部）
+        int64_t  revision = 0;            // 单调版本（前端 <= 已应用则丢弃）
+        uint32_t verts = 0;               // 顶点数（= 3*tris）
+        uint32_t tris = 0;                // 三角面数
+        double   range_min[3] = {0, 0, 0};// 块局部量化包围盒
+        double   range_max[3] = {0, 0, 0};
+        bool     has_normals = false;     // payload 是否含 int8 法线
+    };
+
+    struct MeshFrame {
+        std::string type = std::string(SensorType::kMesh);  // "mesh"
+        double timestamp = 0.0;
+        uint32_t seq = 0;
+        std::string frame_id = "base_link";
+        std::string encoding = "raw";     // payload 压缩算法：raw / zstd
+        std::string scope = "delta";      // delta（增量）/ map（全量重同步）
+        std::string pos_dtype = "int16";  // 顶点量化类型（当前固定 int16）
+        std::string normal_dtype = "int8";// 法线量化类型（当前固定 int8）
+        std::vector<MeshChunkMeta> chunks;
+        std::vector<uint8_t> payload;     // 已量化（可压缩）的拼接 payload
     };
 
     // ════════════════════════════════════════════════════════════════
@@ -411,6 +451,179 @@ namespace RusUtils {
             out.step = static_cast<uint32_t>(num("step"));
         }
 
+        out.payload.assign(buf.begin() + 4 + head_len, buf.end());
+        return true;
+    }
+
+    // ────────────── 增量网格帧（/mesh）编解码 ──────────────
+
+    inline int16_t mesh_quant_i16(double v, double mn, double mx) {
+        if (mx <= mn) return 0;
+        double q = std::lround((v - mn) * 65535.0 / (mx - mn) - 32768.0);
+        if (q < -32768.0) q = -32768.0;
+        if (q > 32767.0) q = 32767.0;
+        return static_cast<int16_t>(q);
+    }
+
+    inline void mesh_append_i16_le(std::vector<uint8_t>& o, int16_t v) {
+        o.push_back(static_cast<uint8_t>(v & 0xFF));
+        o.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    }
+
+    /// 量化一个块的三角汤 + 法线，追加进 out_payload；填 meta 的 verts/tris/range/has_normals。
+    /// verts/normals 为**块局部** float 交错数组（3 float/顶点）；三角汤隐式顺序索引。
+    inline void QuantizeMeshChunkPayload(const std::vector<float>& verts,
+                                         const std::vector<float>& normals,
+                                         MeshChunkMeta& meta, std::vector<uint8_t>& out_payload) {
+        const size_t nv = verts.size() / 3;
+        meta.verts = static_cast<uint32_t>(nv);
+        meta.tris = static_cast<uint32_t>(nv / 3);
+        if (nv == 0) {
+            for (int a = 0; a < 3; ++a) { meta.range_min[a] = 0.0; meta.range_max[a] = 0.0; }
+            meta.has_normals = false;
+            return;
+        }
+        double mn[3] = {1e300, 1e300, 1e300}, mx[3] = {-1e300, -1e300, -1e300};
+        for (size_t i = 0; i < nv; ++i)
+            for (int a = 0; a < 3; ++a) {
+                const double v = verts[i * 3 + a];
+                if (v < mn[a]) mn[a] = v;
+                if (v > mx[a]) mx[a] = v;
+            }
+        for (int a = 0; a < 3; ++a) {
+            if (mx[a] <= mn[a]) mx[a] = mn[a] + 0.001;   // 退化轴补 1mm（与点云一致）
+            meta.range_min[a] = mn[a];
+            meta.range_max[a] = mx[a];
+        }
+        meta.has_normals = (normals.size() == verts.size());
+        for (size_t i = 0; i < nv; ++i)
+            for (int a = 0; a < 3; ++a)
+                mesh_append_i16_le(out_payload, mesh_quant_i16(verts[i * 3 + a], mn[a], mx[a]));
+        if (meta.has_normals) {
+            for (size_t i = 0; i < normals.size(); ++i) {
+                double v = normals[i];
+                if (v > 1.0) v = 1.0;
+                if (v < -1.0) v = -1.0;
+                out_payload.push_back(static_cast<uint8_t>(static_cast<int8_t>(std::lround(v * 127.0))));
+            }
+        }
+    }
+
+    /// 编码增量网格帧 → 二进制（uint32 LE 头长度 + JSON 头 + payload；与 EncodeSensorFrame 同构）
+    inline std::vector<uint8_t> EncodeMeshFrame(const MeshFrame& f) {
+        std::string head = "{\"type\":\"" + detail::json_escape(f.type) + "\"";
+        head += ",\"pos_dtype\":\"" + detail::json_escape(f.pos_dtype) + "\"";
+        head += ",\"normal_dtype\":\"" + detail::json_escape(f.normal_dtype) + "\"";
+        head += ",\"chunks\":[";
+        char buf[160];
+        for (size_t i = 0; i < f.chunks.size(); ++i) {
+            const MeshChunkMeta& c = f.chunks[i];
+            if (i) head += ",";
+            head += "{\"id\":" + std::to_string(c.id) + ",\"kind\":\"" +
+                    (c.kind == MeshChunkMeta::kRemove ? "remove" : "upsert") + "\"";
+            if (c.kind != MeshChunkMeta::kRemove) {
+                snprintf(buf, sizeof(buf), ",\"origin\":[%.6f,%.6f,%.6f]",
+                         c.origin[0], c.origin[1], c.origin[2]);
+                head += buf;
+                head += ",\"revision\":" + std::to_string(c.revision) +
+                        ",\"verts\":" + std::to_string(c.verts) +
+                        ",\"tris\":" + std::to_string(c.tris);
+                snprintf(buf, sizeof(buf), ",\"range_min\":[%.6f,%.6f,%.6f]",
+                         c.range_min[0], c.range_min[1], c.range_min[2]);
+                head += buf;
+                snprintf(buf, sizeof(buf), ",\"range_max\":[%.6f,%.6f,%.6f]",
+                         c.range_max[0], c.range_max[1], c.range_max[2]);
+                head += buf;
+                head += std::string(",\"has_normals\":") + (c.has_normals ? "true" : "false");
+            }
+            head += "}";
+        }
+        head += "]";
+        head += ",\"frame_id\":\"" + detail::json_escape(f.frame_id) + "\"";
+        head += ",\"encoding\":\"" + detail::json_escape(f.encoding) + "\"";
+        head += ",\"scope\":\"" + detail::json_escape(f.scope) + "\"";
+        head += ",\"timestamp\":" + detail::dtoa(f.timestamp);
+        head += ",\"seq\":" + std::to_string(f.seq) + "}";
+
+        std::vector<uint8_t> out;
+        detail::append_u32_le(out, static_cast<uint32_t>(head.size()));
+        out.insert(out.end(), head.begin(), head.end());
+        out.insert(out.end(), f.payload.begin(), f.payload.end());
+        return out;
+    }
+
+    namespace mesh_detail {
+        inline double obj_num(const std::string& o, const std::string& k) {
+            auto p = o.find("\"" + k + "\"");
+            if (p == std::string::npos) return 0.0;
+            p = o.find(':', p + k.size() + 2);
+            if (p == std::string::npos) return 0.0;
+            auto e = o.find_first_of(",}]", p);
+            if (e == std::string::npos) e = o.size();
+            try { return std::stod(o.substr(p + 1, e - p - 1)); } catch (...) { return 0.0; }
+        }
+
+        inline MeshChunkMeta parse_chunk(const std::string& o) {
+            MeshChunkMeta c;
+            c.id = static_cast<int64_t>(obj_num(o, "id"));
+            c.kind = (detail::find_str(o, "kind") == "remove") ? MeshChunkMeta::kRemove
+                                                               : MeshChunkMeta::kUpsert;
+            const std::vector<double> org = detail::find_arr(o, "origin");
+            if (org.size() >= 3) { c.origin[0] = org[0]; c.origin[1] = org[1]; c.origin[2] = org[2]; }
+            c.revision = static_cast<int64_t>(obj_num(o, "revision"));
+            c.verts = static_cast<uint32_t>(obj_num(o, "verts"));
+            c.tris = static_cast<uint32_t>(obj_num(o, "tris"));
+            const std::vector<double> mn = detail::find_arr(o, "range_min");
+            const std::vector<double> mx = detail::find_arr(o, "range_max");
+            if (mn.size() >= 3) { c.range_min[0] = mn[0]; c.range_min[1] = mn[1]; c.range_min[2] = mn[2]; }
+            if (mx.size() >= 3) { c.range_max[0] = mx[0]; c.range_max[1] = mx[1]; c.range_max[2] = mx[2]; }
+            c.has_normals = o.find("\"has_normals\":true") != std::string::npos;
+            return c;
+        }
+    }  // namespace mesh_detail
+
+    /// 解码增量网格帧（成功 true；头非法 / 数据不足 false）。payload 原样返回（压缩由上层按 encoding 处理）。
+    inline bool DecodeMeshFrame(const std::vector<uint8_t>& buf, MeshFrame& out) {
+        if (buf.size() < 4) return false;
+        const uint32_t head_len = detail::read_u32_le(buf.data());
+        if (buf.size() < 4u + head_len) return false;
+        const std::string head(buf.begin() + 4, buf.begin() + 4 + head_len);
+
+        out = MeshFrame{};
+        out.type = detail::find_str(head, "type");
+        out.frame_id = detail::find_str(head, "frame_id");
+        out.encoding = detail::find_str(head, "encoding");
+        out.scope = detail::find_str(head, "scope");
+        out.pos_dtype = detail::find_str(head, "pos_dtype");
+        out.normal_dtype = detail::find_str(head, "normal_dtype");
+        out.timestamp = mesh_detail::obj_num(head, "timestamp");
+        out.seq = static_cast<uint32_t>(mesh_detail::obj_num(head, "seq"));
+
+        auto cp = head.find("\"chunks\"");
+        if (cp != std::string::npos) {
+            auto lb = head.find('[', cp);
+            size_t rb = std::string::npos;
+            if (lb != std::string::npos) {
+                // 匹配括号取 chunks 数组的结尾（块对象内含 origin/range 等嵌套 []）
+                int depth = 0;
+                for (size_t i = lb; i < head.size(); ++i) {
+                    if (head[i] == '[') ++depth;
+                    else if (head[i] == ']' && --depth == 0) { rb = i; break; }
+                }
+            }
+            if (lb != std::string::npos && rb != std::string::npos && rb > lb) {
+                const std::string arr = head.substr(lb + 1, rb - lb - 1);
+                size_t i = 0;
+                while (i < arr.size()) {
+                    auto ob = arr.find('{', i);
+                    if (ob == std::string::npos) break;
+                    auto oe = arr.find('}', ob);
+                    if (oe == std::string::npos) break;
+                    out.chunks.push_back(mesh_detail::parse_chunk(arr.substr(ob + 1, oe - ob - 1)));
+                    i = oe + 1;
+                }
+            }
+        }
         out.payload.assign(buf.begin() + 4 + head_len, buf.end());
         return true;
     }

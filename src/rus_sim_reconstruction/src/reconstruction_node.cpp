@@ -3,6 +3,8 @@
 #include <chrono>
 #include <vector>
 
+#include <zstd.h>
+
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/features/normal_3d.h>
@@ -10,7 +12,22 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
 
+#include <rus_sim_utils/protocol.hpp>
+
 namespace RusReconstruction {
+
+    namespace {
+        bool ZstdCompress(const std::vector<uint8_t>& in, std::vector<uint8_t>& out)
+        {
+            if (in.empty()) return false;
+            const size_t bound = ZSTD_compressBound(in.size());
+            out.resize(bound);
+            const size_t cs = ZSTD_compress(out.data(), bound, in.data(), in.size(), 3);
+            if (ZSTD_isError(cs)) return false;
+            out.resize(cs);
+            return true;
+        }
+    }  // namespace
 
     ReconstructionNode::ReconstructionNode() : rclcpp::Node("reconstruction_node")
     {
@@ -29,6 +46,21 @@ namespace RusReconstruction {
         opt.voxel_size = voxel;
         map_ = std::make_unique<ShardedSurfelMap>(opt, shards, threads);
 
+        // ── 增量网格（/mesh）──
+        enable_mesh_ = declare_parameter<bool>("enable_mesh", true);
+        mesh_topic_ = declare_parameter<std::string>("mesh_topic", "/sensor/mesh");
+        mesh_period_ = declare_parameter<double>("mesh_period", 0.3);
+        mesh_full_period_ = declare_parameter<double>("mesh_full_period", 5.0);
+        mesh_compress_ = declare_parameter<bool>("mesh_compress", true);
+        const std::vector<double> so = declare_parameter<std::vector<double>>(
+            "sensor_origin", std::vector<double>{0.0, 0.0, 0.0});
+        if (so.size() == 3) sensor_origin_ = Vec3(so[0], so[1], so[2]);
+
+        TsdfVolume::Options topt;
+        topt.voxel_size = declare_parameter<double>("tsdf_voxel_size", 0.006);
+        topt.truncation = declare_parameter<double>("tsdf_truncation", 0.018);
+        tsdf_ = std::make_unique<TsdfVolume>(topt);
+
         auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
         sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
             input_topic_, qos, std::bind(&ReconstructionNode::OnCloud, this, std::placeholders::_1));
@@ -36,9 +68,20 @@ namespace RusReconstruction {
         timer_ = create_wall_timer(std::chrono::duration<double>(publish_period_),
             std::bind(&ReconstructionNode::PublishReconstruction, this));
 
+        if (enable_mesh_) {
+            auto mqos = rclcpp::QoS(rclcpp::KeepLast(8)).reliable();
+            mesh_pub_ = create_publisher<rus_sim_interfaces::msg::MeshFrame>(mesh_topic_, mqos);
+            mesh_timer_ = create_wall_timer(std::chrono::duration<double>(mesh_period_),
+                std::bind(&ReconstructionNode::PublishMesh, this));
+        }
+
         RCLCPP_INFO(get_logger(), "重建节点启动：输入=%s 输出=%s voxel=%.4fm shards=%d 法线估计=%d",
                     input_topic_.c_str(), output_topic_.c_str(), voxel, shards,
                     estimate_normals_ ? 1 : 0);
+        RCLCPP_INFO(get_logger(),
+                    "增量网格：enable=%d 话题=%s tsdf=%.4fm/trunc%.4f 周期=%.2fs 全量=%.1fs 压缩=%d",
+                    enable_mesh_ ? 1 : 0, mesh_topic_.c_str(), topt.voxel_size, topt.truncation,
+                    mesh_period_, mesh_full_period_, mesh_compress_ ? 1 : 0);
     }
 
     void ReconstructionNode::OnCloud(sensor_msgs::msg::PointCloud2::SharedPtr msg)
@@ -55,6 +98,10 @@ namespace RusReconstruction {
             pcl::search::KdTree<pcl::PointXYZRGB>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGB>);
             ne.setSearchMethod(tree);
             ne.setKSearch(normal_k_);
+            // 用传感器原点定向法线（PCL 法线无向；TSDF 需要朝外的确定方向）
+            ne.setViewPoint(static_cast<float>(sensor_origin_.x()),
+                            static_cast<float>(sensor_origin_.y()),
+                            static_cast<float>(sensor_origin_.z()));
             ne.compute(*normals);
             if (normals->size() != cloud->size()) normals.reset();
         }
@@ -78,7 +125,12 @@ namespace RusReconstruction {
         }
         if (f.points.empty()) { ++frames_dropped_; return; }
 
+        // 面元融合（点云快照）
         map_->Fuse(f);
+        // 稀疏 TSDF 积分（增量网格）
+        if (enable_mesh_ && tsdf_ && !f.normals.empty()) {
+            tsdf_->Integrate(f.points, f.normals, sensor_origin_, 1.0, /*orient_to_origin=*/true);
+        }
         ++frames_in_;
         points_in_ += f.points.size();
     }
@@ -118,6 +170,87 @@ namespace RusReconstruction {
             static_cast<unsigned long long>(points_in_),
             static_cast<unsigned long long>(frames_dropped_),
             map_->SurfaceCount(), min_confidence_, surfels.size());
+    }
+
+    void ReconstructionNode::PublishMesh()
+    {
+        if (!enable_mesh_ || !tsdf_) return;
+
+        tsdf_->UpdateMesh();
+        const double t = now().seconds();
+        const bool full = (t - last_mesh_full_) >= mesh_full_period_;
+        std::vector<ChunkMesh> chunks = full ? tsdf_->SnapshotChunks() : tsdf_->DrainChunkDeltas();
+        if (chunks.empty()) return;
+        if (full) last_mesh_full_ = t;
+
+        // 组装协议帧（量化在 protocol.hpp 中，单一来源）
+        RusUtils::MeshFrame frame;
+        frame.timestamp = t;
+        frame.seq = mesh_seq_++;
+        frame.frame_id = "base_link";
+        frame.scope = full ? "map" : "delta";
+        frame.encoding = "raw";
+        size_t n_upsert = 0, n_remove = 0;
+        for (const auto& c : chunks) {
+            RusUtils::MeshChunkMeta m;
+            m.id = c.chunk_id;
+            if (c.removed) {
+                m.kind = RusUtils::MeshChunkMeta::kRemove;
+                ++n_remove;
+            } else {
+                m.kind = RusUtils::MeshChunkMeta::kUpsert;
+                m.origin[0] = c.origin.x();
+                m.origin[1] = c.origin.y();
+                m.origin[2] = c.origin.z();
+                m.revision = static_cast<int64_t>(c.revision);
+                RusUtils::QuantizeMeshChunkPayload(c.verts, c.normals, m, frame.payload);
+                ++n_upsert;
+            }
+            frame.chunks.push_back(m);
+        }
+        if (mesh_compress_ && !frame.payload.empty()) {
+            std::vector<uint8_t> comp;
+            if (ZstdCompress(frame.payload, comp)) { frame.payload.swap(comp); frame.encoding = "zstd"; }
+        }
+
+        rus_sim_interfaces::msg::MeshFrame msg;
+        msg.stamp = now();
+        msg.frame_id = "base_link";
+        msg.seq = frame.seq;
+        msg.scope = frame.scope;
+        msg.encoding = frame.encoding;
+        msg.pos_dtype = frame.pos_dtype;
+        msg.normal_dtype = frame.normal_dtype;
+        msg.chunks.reserve(frame.chunks.size());
+        for (const auto& m : frame.chunks) {
+            rus_sim_interfaces::msg::MeshChunkMeta rc;
+            rc.chunk_id = m.id;
+            rc.kind = (m.kind == RusUtils::MeshChunkMeta::kRemove)
+                ? rus_sim_interfaces::msg::MeshChunkMeta::KIND_REMOVE
+                : rus_sim_interfaces::msg::MeshChunkMeta::KIND_UPSERT;
+            rc.origin[0] = m.origin[0];
+            rc.origin[1] = m.origin[1];
+            rc.origin[2] = m.origin[2];
+            rc.revision = m.revision;
+            rc.verts = m.verts;
+            rc.tris = m.tris;
+            rc.range_min[0] = m.range_min[0];
+            rc.range_min[1] = m.range_min[1];
+            rc.range_min[2] = m.range_min[2];
+            rc.range_max[0] = m.range_max[0];
+            rc.range_max[1] = m.range_max[1];
+            rc.range_max[2] = m.range_max[2];
+            rc.has_normals = m.has_normals;
+            msg.chunks.push_back(rc);
+        }
+        msg.data = frame.payload;
+        mesh_pub_->publish(msg);
+
+        RCLCPP_INFO(get_logger(),
+            "网格增量：seq=%u %s 块=%zu (upsert=%zu remove=%zu) payload=%zu B enc=%s 总块=%zu dirty=%zu",
+            frame.seq, frame.scope.c_str(), frame.chunks.size(), n_upsert, n_remove,
+            frame.payload.size(), frame.encoding.c_str(), tsdf_->BlockCount(),
+            tsdf_->DirtyBlockCount());
     }
 
 }  // namespace RusReconstruction

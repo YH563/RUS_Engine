@@ -15,4 +15,17 @@ reconstruction_node:
     estimate_normals: true # 输入无 PCA 法线时用 PCL 估计（较慢；真机可由 SDK 提供）
     normal_k: 10           # 法线估计近邻数
 
+    # 法线定向 / TSDF 视角：传感器原点（base_link，米）。真机填相机在 base_link 下的位置；
+    # 默认 (0,0,0) = 以机械臂基座为视角，扫描面朝外时基本可用。
+    sensor_origin: [0.0, 0.0, 0.0]
+
+    # 增量网格（/mesh 通道）
+    enable_mesh: true
+    mesh_topic: "/sensor/mesh"
+    tsdf_voxel_size: 0.006   # TSDF 体素边长（米）
+    tsdf_truncation: 0.018   # 截断距离（米）
+    mesh_period: 0.3         # 增量块发布周期（秒）
+    mesh_full_period: 5.0    # 全量重同步周期（秒）；新连接/慢客户端靠它收敛
+    mesh_compress: true      # payload zstd 压缩
+
     save_pcd: ""           # 非空则每次发布落盘该 PCD（联调/测试用）

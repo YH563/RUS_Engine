@@ -18,7 +18,8 @@ namespace RusUtils {
     namespace WsPath {
         inline constexpr std::string_view kControl = "/control";  // command / reply / event
         inline constexpr std::string_view kState   = "/state";    // state 高频流（可丢帧）
-        inline constexpr std::string_view kSensor  = "/sensor";   // 感知二进制帧（可丢帧，预留）
+        inline constexpr std::string_view kSensor  = "/sensor";   // 感知二进制帧（可丢帧）
+        inline constexpr std::string_view kMesh    = "/mesh";     // 增量网格块（可靠有序队列）
     }
 
     // ── 指令名（统一平铺） ──
@@ -114,6 +115,7 @@ namespace RusUtils {
     namespace SensorType {
         inline constexpr std::string_view kPointCloud = "pointcloud";
         inline constexpr std::string_view kImage      = "image";
+        inline constexpr std::string_view kMesh       = "mesh";        // 增量网格块（/mesh 通道）
         inline constexpr std::string_view kUltrasound = "ultrasound";  // 预留：超声（尚未实现）
         inline constexpr std::string_view kCompressed = "compressed";
     }

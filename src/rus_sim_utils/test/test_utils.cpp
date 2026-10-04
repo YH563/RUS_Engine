@@ -266,6 +266,60 @@ TEST(Utils, FlangePosToPose)
     EXPECT_DOUBLE_EQ(p2.orientation.w, 1.0);
 }
 
+// ────────────────────────────────────────────────────────────────
+//  protocol：增量网格帧（/mesh）编解码往返
+// ────────────────────────────────────────────────────────────────
+TEST(Protocol, MeshFrameEncodeDecodeRoundTrip)
+{
+    MeshFrame f;
+    f.type = std::string(SensorType::kMesh);
+    f.timestamp = 12.5;
+    f.seq = 7;
+    f.frame_id = "base_link";
+    f.encoding = "raw";
+    f.scope = "delta";
+
+    MeshChunkMeta up;
+    up.id = 8765432101LL;
+    up.kind = MeshChunkMeta::kUpsert;
+    up.origin[0] = 1.2; up.origin[1] = -0.3; up.origin[2] = 0.4;
+    up.revision = 42;
+    const std::vector<float> verts = {0, 0, 0, 0.1f, 0, 0, 0, 0.1f, 0};   // 块局部
+    const std::vector<float> norms = {0, 0, 1, 0, 0, 1, 0, 0, 1};
+    QuantizeMeshChunkPayload(verts, norms, up, f.payload);
+    f.chunks.push_back(up);
+
+    MeshChunkMeta rm;
+    rm.id = 99;
+    rm.kind = MeshChunkMeta::kRemove;
+    f.chunks.push_back(rm);
+
+    const std::vector<uint8_t> wire = EncodeMeshFrame(f);
+    // 完整性：4 + 头长 + payload 长 == 消息长
+    ASSERT_GE(wire.size(), 4u);
+    const uint32_t head_len = static_cast<uint32_t>(wire[0]) | (wire[1] << 8) |
+                              (wire[2] << 16) | (static_cast<uint32_t>(wire[3]) << 24);
+    EXPECT_EQ(4u + head_len + f.payload.size(), wire.size());
+
+    MeshFrame g;
+    ASSERT_TRUE(DecodeMeshFrame(wire, g));
+    EXPECT_EQ(g.type, "mesh");
+    EXPECT_EQ(g.seq, 7u);
+    EXPECT_EQ(g.encoding, "raw");
+    EXPECT_EQ(g.scope, "delta");
+    ASSERT_EQ(g.chunks.size(), 2u);
+    EXPECT_EQ(g.chunks[0].id, up.id);
+    EXPECT_EQ(g.chunks[0].kind, MeshChunkMeta::kUpsert);
+    EXPECT_EQ(g.chunks[0].verts, 3u);
+    EXPECT_EQ(g.chunks[0].tris, 1u);
+    EXPECT_TRUE(g.chunks[0].has_normals);
+    EXPECT_NEAR(g.chunks[0].origin[0], 1.2, 1e-6);
+    EXPECT_EQ(g.chunks[0].revision, 42);
+    EXPECT_EQ(g.chunks[1].id, 99);
+    EXPECT_EQ(g.chunks[1].kind, MeshChunkMeta::kRemove);
+    EXPECT_EQ(g.payload.size(), f.payload.size());
+}
+
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);

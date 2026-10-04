@@ -7,6 +7,7 @@
 #include <utility>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rus_sim_interfaces/msg/mesh_frame.hpp>
 #include <rus_sim_interfaces/msg/module_event.hpp>
 #include <rus_sim_interfaces/msg/robot_state.hpp>
 #include <rus_sim_interfaces/msg/sensor_frame.hpp>
@@ -54,12 +55,14 @@ namespace rus_sim_bridge {
 
         using ModuleEvent = rus_sim_interfaces::msg::ModuleEvent;
         using SensorFrame = rus_sim_interfaces::msg::SensorFrame;
+        using MeshFrame = rus_sim_interfaces::msg::MeshFrame;
 
         void on_frontend_command(const RusUtils::CommandMessage& cmd, WsServer::ReplyFn reply);
         void drain_queue();   // 定时器：处理积压 command
         void on_state(const rus_sim_interfaces::msg::RobotState::SharedPtr msg);
         void on_module_event(const ModuleEvent::SharedPtr msg);
         void on_sensor(const SensorFrame::SharedPtr msg);
+        void on_mesh(const MeshFrame::SharedPtr msg);
 
         // 指令队列（WS 线程入队 / 执行器线程出队）
         std::mutex queue_mutex_;
@@ -73,11 +76,13 @@ namespace rus_sim_bridge {
         rclcpp::Subscription<rus_sim_interfaces::msg::RobotState>::SharedPtr state_sub_;
         rclcpp::Subscription<ModuleEvent>::SharedPtr event_sub_;
         rclcpp::Subscription<SensorFrame>::SharedPtr sensor_sub_;
+        rclcpp::Subscription<MeshFrame>::SharedPtr mesh_sub_;
 
         WsServer ws_;
         double last_state_ts_ = -1.0;
         double state_rate_ = 0.0;
         bool forward_sensor_ = true;   // false = 不订阅感知流（/sensor 通道无数据）
+        bool forward_mesh_ = true;     // false = 不订阅增量网格（/mesh 通道无数据）
     };
 
 }  // namespace rus_sim_bridge

@@ -30,6 +30,8 @@ namespace rus_sim_bridge {
           .per_session_data_size = sizeof(PerSessionData), .rx_buffer_size = 4096 },
         { .name = "sensor", .callback = WsServer::ws_callback,
           .per_session_data_size = sizeof(PerSessionData), .rx_buffer_size = 4096 },
+        { .name = "mesh", .callback = WsServer::ws_callback,
+          .per_session_data_size = sizeof(PerSessionData), .rx_buffer_size = 4096 },
         { nullptr, nullptr, 0, 0 }  // 终止
     };
 
@@ -70,7 +72,7 @@ namespace rus_sim_bridge {
                 if (context_) {
                     port_ = p;
                     log_msg(0, "已启动 ws://0.0.0.0:" + std::to_string(p) +
-                               "  (路径 /control /state /sensor)");
+                               "  (路径 /control /state /sensor /mesh)");
                     break;
                 }
                 log_msg(1, "端口 " + std::to_string(p) + " 不可用，尝试下一个...");
@@ -136,6 +138,19 @@ namespace rus_sim_bridge {
         if (context_) lws_cancel_service(context_.get());  // 唤醒事件循环
     }
 
+    void WsServer::BroadcastMesh(std::vector<uint8_t> frame) {
+        if (!running_.load() || frame.empty()) return;
+        {
+            std::lock_guard lock(mesh_mutex_);
+            mesh_queue_.push_back(std::move(frame));
+            if (mesh_queue_.size() > mesh_queue_cap_) {
+                mesh_queue_.pop_front();   // 慢客户端会跳过，靠全量快照重同步
+                ++mesh_first_id_;
+            }
+        }
+        if (context_) lws_cancel_service(context_.get());
+    }
+
     // ================================================================
     //  内部
     // ================================================================
@@ -164,6 +179,12 @@ namespace rus_sim_bridge {
             sensor_gen = sensor_gen_;
         }
 
+        uint64_t mesh_last_id = 0;
+        {
+            std::lock_guard lock(mesh_mutex_);
+            mesh_last_id = mesh_first_id_ + mesh_queue_.size();
+        }
+
         std::vector<lws*> to_wake;
         {
             std::lock_guard lock(registry_mutex_);
@@ -173,6 +194,9 @@ namespace rus_sim_bridge {
                         to_wake.push_back(wsi);
                 } else if (info.channel == Channel::Sensor) {
                     if (sensor_gen != 0 && info.sensor_sent_gen != sensor_gen)
+                        to_wake.push_back(wsi);
+                } else if (info.channel == Channel::Mesh) {
+                    if (!info.mesh_init || info.mesh_sent_id < mesh_last_id)
                         to_wake.push_back(wsi);
                 } else {
                     auto it = pending_replies_.find(info.id);
@@ -205,11 +229,13 @@ namespace rus_sim_bridge {
             const char* proto_name = lws_get_protocol(wsi)->name;
             char uri[128] = {0};
             if (lws_hdr_copy(wsi, uri, sizeof(uri), WSI_TOKEN_GET_URI) > 0) {
-                if (strstr(uri, "/state"))      ch = Channel::State;
+                if (strstr(uri, "/state"))       ch = Channel::State;
                 else if (strstr(uri, "/sensor")) ch = Channel::Sensor;
+                else if (strstr(uri, "/mesh"))   ch = Channel::Mesh;
             } else if (proto_name) {
-                if (!strcmp(proto_name, "state"))  ch = Channel::State;
+                if (!strcmp(proto_name, "state"))       ch = Channel::State;
                 else if (!strcmp(proto_name, "sensor")) ch = Channel::Sensor;
+                else if (!strcmp(proto_name, "mesh"))   ch = Channel::Mesh;
             }
 
             {
@@ -338,6 +364,42 @@ namespace rus_sim_bridge {
                 auto it = server->sessions_.find(wsi);
                 if (it != server->sessions_.end()) it->second.sensor_sent_gen = gen;
                 return 0;
+            }
+
+            if (ch == Channel::Mesh) {
+                // 可靠有序：按游标逐帧发，直到追上队列尾 / 管道阻塞。
+                // 一帧 = 一条 WS 二进制消息（LWS_WRITE_BINARY）。
+                // 注意：游标必须在**同一把锁内**选定并推进（与 BroadcastMesh 的
+                // pop_front 互斥），否则队列 front 前移会让 idx 与 sent_id 错位、乱序。
+                for (;;) {
+                    if (lws_send_pipe_choked(wsi)) {
+                        lws_callback_on_writable(wsi);   // 稍后再续
+                        return 0;
+                    }
+                    std::vector<uint8_t> frame;
+                    {
+                        std::lock_guard mlock(server->mesh_mutex_);
+                        std::lock_guard rlock(server->registry_mutex_);
+                        auto it = server->sessions_.find(wsi);
+                        if (it == server->sessions_.end()) return 0;
+                        auto& info = it->second;
+                        const uint64_t last = server->mesh_first_id_ + server->mesh_queue_.size();
+                        if (!info.mesh_init) {
+                            info.mesh_sent_id = server->mesh_first_id_;   // 只发队列里尚存的
+                            info.mesh_init = true;
+                        }
+                        if (info.mesh_sent_id < server->mesh_first_id_)
+                            info.mesh_sent_id = server->mesh_first_id_;   // 落后太多 → 跳过
+                        if (info.mesh_sent_id >= last) return 0;          // 已追上
+                        const size_t idx = static_cast<size_t>(info.mesh_sent_id - server->mesh_first_id_);
+                        frame = server->mesh_queue_[idx];
+                        info.mesh_sent_id++;   // 原子推进（与 pop_front 同锁）
+                    }
+                    std::vector<unsigned char> buf(LWS_PRE + frame.size());
+                    std::memcpy(buf.data() + LWS_PRE, frame.data(), frame.size());
+                    if (lws_write(wsi, buf.data() + LWS_PRE, frame.size(), LWS_WRITE_BINARY) < 0)
+                        return -1;
+                }
             }
 
             // control：取本会话待推送队列

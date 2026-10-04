@@ -78,9 +78,23 @@ namespace rus_sim_bridge {
                 std::bind(&BridgeNode::on_sensor, this, std::placeholders::_1));
         }
 
-        RCLCPP_INFO(get_logger(), "BridgeNode 已启动 ws://0.0.0.0:%d (control/state/sensor)", ws_port);
+        // ── 订阅增量网格 → 广播到 /mesh 可靠通道（不丢块）──
+        const std::string mesh_topic =
+            declare_parameter<std::string>("mesh_topic", "/sensor/mesh");
+        forward_mesh_ = declare_parameter<bool>("forward_mesh", true);
+        if (forward_mesh_) {
+            rclcpp::QoS mesh_qos(rclcpp::KeepLast(8));   // 可靠、保序，与发布端一致
+            mesh_qos.reliable();
+            mesh_sub_ = create_subscription<MeshFrame>(
+                mesh_topic, mesh_qos,
+                std::bind(&BridgeNode::on_mesh, this, std::placeholders::_1));
+        }
+
+        RCLCPP_INFO(get_logger(), "BridgeNode 已启动 ws://0.0.0.0:%d (control/state/sensor/mesh)", ws_port);
         RCLCPP_INFO(get_logger(), "感知流：%s <- %s", forward_sensor_ ? "转发" : "关闭",
                     sensor_topic.c_str());
+        RCLCPP_INFO(get_logger(), "增量网格流：%s <- %s", forward_mesh_ ? "转发" : "关闭",
+                    mesh_topic.c_str());
     }
 
     // ================================================================
@@ -196,6 +210,51 @@ namespace rus_sim_bridge {
         RCLCPP_DEBUG(get_logger(), "感知帧 seq=%u type=%s scope=%s points=%u payload=%zuB → /sensor",
                      msg->seq, f.type.c_str(), f.scope.c_str(), msg->points, f.payload.size());
         ws_.BroadcastSensor(RusUtils::EncodeSensorFrame(f));
+    }
+
+    // ================================================================
+    //  增量网格流（reconstruction → bridge → 前端 /mesh 可靠通道）
+    // ================================================================
+
+    void BridgeNode::on_mesh(const MeshFrame::SharedPtr msg) {
+        // ROS 消息 → 线格式结构（字段一一对应；编码走唯一的 EncodeMeshFrame）
+        RusUtils::MeshFrame f;
+        f.type = std::string(RusUtils::SensorType::kMesh);
+        f.timestamp = rclcpp::Time(msg->stamp).seconds();
+        f.seq = msg->seq;
+        f.frame_id = msg->frame_id;
+        f.encoding = msg->encoding;
+        f.scope = msg->scope;
+        f.pos_dtype = msg->pos_dtype;
+        f.normal_dtype = msg->normal_dtype;
+        f.chunks.reserve(msg->chunks.size());
+        for (const auto& c : msg->chunks) {
+            RusUtils::MeshChunkMeta m;
+            m.id = c.chunk_id;
+            m.kind = (c.kind == rus_sim_interfaces::msg::MeshChunkMeta::KIND_REMOVE)
+                ? RusUtils::MeshChunkMeta::kRemove
+                : RusUtils::MeshChunkMeta::kUpsert;
+            m.origin[0] = c.origin[0];
+            m.origin[1] = c.origin[1];
+            m.origin[2] = c.origin[2];
+            m.revision = c.revision;
+            m.verts = c.verts;
+            m.tris = c.tris;
+            m.range_min[0] = c.range_min[0];
+            m.range_min[1] = c.range_min[1];
+            m.range_min[2] = c.range_min[2];
+            m.range_max[0] = c.range_max[0];
+            m.range_max[1] = c.range_max[1];
+            m.range_max[2] = c.range_max[2];
+            m.has_normals = c.has_normals;
+            f.chunks.push_back(m);
+        }
+        f.payload = msg->data;
+
+        // 一帧 = 一条 WS 二进制消息（可靠有序：不丢块 / remove）
+        RCLCPP_DEBUG(get_logger(), "网格帧 seq=%u scope=%s 块=%zu payload=%zuB → /mesh",
+                     msg->seq, f.scope.c_str(), f.chunks.size(), f.payload.size());
+        ws_.BroadcastMesh(RusUtils::EncodeMeshFrame(f));
     }
 
 }  // namespace rus_sim_bridge

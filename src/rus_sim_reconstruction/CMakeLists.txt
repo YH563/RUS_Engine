@@ -12,6 +12,14 @@ find_package(Threads REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
+find_package(rus_sim_interfaces REQUIRED)
+find_package(rus_sim_utils REQUIRED)
+# zstd（/mesh payload 压缩；libzstd-dev）
+find_path(ZSTD_INCLUDE_DIR zstd.h)
+find_library(ZSTD_LIBRARY zstd)
+if(NOT ZSTD_INCLUDE_DIR OR NOT ZSTD_LIBRARY)
+  message(FATAL_ERROR "libzstd-dev not found (zstd.h / libzstd)")
+endif()
 # PCL 仅用于网格化工具（Poisson），核心库与单测不链接
 find_package(PCL REQUIRED COMPONENTS common surface search io filters kdtree)
 # 实时可视化用 GLFW + GLEW（避免 PCLVisualizer/VTK 在本机的不稳定）
@@ -134,9 +142,10 @@ add_library(reconstruction_ros SHARED src/reconstruction_node.cpp)
 target_include_directories(reconstruction_ros PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
-  ${PCL_INCLUDE_DIRS})
-target_link_libraries(reconstruction_ros reconstruction_core ${PCL_LIBRARIES})
-ament_target_dependencies(reconstruction_ros rclcpp sensor_msgs pcl_conversions)
+  ${PCL_INCLUDE_DIRS} ${ZSTD_INCLUDE_DIR})
+target_link_libraries(reconstruction_ros reconstruction_core ${PCL_LIBRARIES} ${ZSTD_LIBRARY})
+ament_target_dependencies(reconstruction_ros rclcpp sensor_msgs pcl_conversions
+  rus_sim_interfaces rus_sim_utils)
 
 add_executable(rus_sim_reconstruction_node src/reconstruction_main.cpp)
 target_link_libraries(rus_sim_reconstruction_node reconstruction_ros)

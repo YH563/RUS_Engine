@@ -14,7 +14,9 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 
+#include "rus_sim_interfaces/msg/mesh_frame.hpp"
 #include "rus_sim_reconstruction/sharded_surfel_map.hpp"
+#include "rus_sim_reconstruction/tsdf_volume.hpp"
 
 namespace RusReconstruction {
 
@@ -25,12 +27,16 @@ namespace RusReconstruction {
     private:
         void OnCloud(sensor_msgs::msg::PointCloud2::SharedPtr msg);
         void PublishReconstruction();
+        void PublishMesh();
 
         std::unique_ptr<ShardedSurfelMap> map_;
+        std::unique_ptr<TsdfVolume> tsdf_;   // 增量网格（按块 upsert/remove）
 
         rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_;
         rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_;
+        rclcpp::Publisher<rus_sim_interfaces::msg::MeshFrame>::SharedPtr mesh_pub_;
         rclcpp::TimerBase::SharedPtr timer_;
+        rclcpp::TimerBase::SharedPtr mesh_timer_;
 
         std::string input_topic_;
         std::string output_topic_;
@@ -39,6 +45,16 @@ namespace RusReconstruction {
         bool estimate_normals_ = true;
         int normal_k_ = 10;
         std::string save_pcd_;   // 非空则每次发布时落盘该 PCD（测试用）
+
+        // 增量网格
+        bool enable_mesh_ = true;
+        std::string mesh_topic_;
+        double mesh_period_ = 0.3;         // 增量块发布周期（秒）
+        double mesh_full_period_ = 5.0;    // 全量重同步周期（秒）
+        bool mesh_compress_ = true;        // payload zstd 压缩
+        Vec3 sensor_origin_ = Vec3::Zero();// 传感器原点（base_link），用于法线定向
+        uint32_t mesh_seq_ = 0;
+        double last_mesh_full_ = -1e9;
 
         uint64_t frames_in_ = 0;
         uint64_t points_in_ = 0;

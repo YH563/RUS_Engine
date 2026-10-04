@@ -369,6 +369,50 @@ public static class SensorFrameDecoder
 8. **`seq` 会回退**：`map_clear` 后 `seq` 复位为 0，丢帧统计/序号断言必须容忍回退。
 9. **`scope` 决定渲染策略**：`frame` 是当前帧（整体替换）、`map` 是累积地图快照（点数大得多）。
 
+### 3.4 增量网格流：mesh（/mesh 通道）
+
+重建结果（稀疏 TSDF + Marching Tetrahedra）按**数据块**增量推给前端 3D 内核。
+**通道语义与 `/sensor` / `/state` 不同**：`/mesh` 是**可靠有序队列**（不丢帧）——
+增量块或 `remove` 一旦丢失会让前端网格腐化。慢客户端落后超出队列窗口时会跳过旧帧，
+靠后端周期性 `scope="map"` 全量快照重同步。
+
+**帧格式**：与感知帧同构 —— `uint32 LE 头长度` + `JSON 头` + `二进制 payload`。
+
+```json
+{ "type":"mesh", "timestamp":1234.5, "seq":512, "frame_id":"base_link",
+  "encoding":"zstd", "scope":"delta",
+  "pos_dtype":"int16", "normal_dtype":"int8",
+  "chunks":[
+    { "id":8765432101, "kind":"upsert", "origin":[1.200000,-0.300000,0.400000],
+      "revision":42, "verts":3072, "tris":1024,
+      "range_min":[...], "range_max":[...], "has_normals":true },
+    { "id":8765432102, "kind":"remove" }
+  ] }
+```
+
+| 头字段 | 类型 | 说明 |
+|--------|------|------|
+| `type` | string | 固定 `"mesh"` |
+| `scope` | string | `delta`（增量）/ `map`（全量重同步，含当前所有块） |
+| `encoding` | string | payload 压缩算法：`zstd` / `raw` |
+| `pos_dtype` / `normal_dtype` | string | 顶点 `int16` / 法线 `int8`（当前固定） |
+| `chunks[].id` | int64 | 稳定块身份（= TSDF 块索引各 21 位有符号打包） |
+| `chunks[].kind` | string | `upsert` / `remove` |
+| `chunks[].origin` | double[3] | 块世界原点；**顶点为块局部坐标**（减 origin） |
+| `chunks[].revision` | int64 | 块单调版本；前端 `<= 已应用` 则丢弃（乱序守卫） |
+| `chunks[].verts` / `tris` | uint32 | 顶点数（=3·tris）/ 三角面数 |
+| `chunks[].range_min/max` | double[3] | 块局部量化包围盒（反量化必需） |
+| `chunks[].has_normals` | bool | payload 是否含 `int8` 法线 |
+
+> - **payload 布局**（解压后，按 `chunks` 顺序拼接，小端）：每个 `upsert` 块为
+>   `int16 pos[verts*3]`（块局部，反量化公式同点云） + `int8 normal[verts*3]`（`has_normals` 时，单位向量 ×127）。
+>   **三角汤 + 隐式顺序索引**：`verts = 3*tris`，索引即 `0..verts-1`，线上**不发索引缓冲**。
+>   `remove` 块无 payload。
+> - **块 = TSDF 数据块**（固定 8³ 体素，默认 48mm）：整块 upsert/remove，**不是逐三角面 delta**。
+> - **与前端渲染库对接**：`RobotSimulation` 的 `MeshChunkUpdate`（稳定 `ChunkId`、块局部交错顶点、
+>   `revision` 乱序守卫）即本协议的数据面；解码后按块 `MeshSink.Push` 即可。
+> - **完整性自检**：`4 + headLen + payloadLen == 消息长度`；一帧 = 一条 WS 二进制消息。
+
 ---
 
 ## 4. 指令清单（按路由分组）
@@ -523,8 +567,13 @@ bridge 已将 `pre_scan_start` / `pre_scan_end` 注册到 PERCEPTION，但 **per
 
 ---
 
-### 4.7 路由到 REPLAYER（离线回放）
+### 4.7 路由到 REPLAYER（离线回放）❌ 已废弃（移交前端，暂留过渡）
 
+> ⚠️ **本节整体已废弃**：回放职责移交**前端**——前端走**共享文件系统**直接读录音目录
+> `<records_dir>/*.rusrec`（格式见 `docs/Protocol/RecFormat.md`）自行解码 / 播放 / 可视化，
+> 不再经 ROS 话题（不会与在线驱动撞话题、无需停驱动）。后端 `replayer_node` 与下列
+> `replay_*` 指令**暂留过渡**，待前端回放完成后整体删除；**新链路不要再用**。
+>
 > 回放节点 `replayer_node`（可执行 `rus_sim_recorder_replay`，服务 `/replayer/command`）
 > 把 `.rusrec` 录音**按时间轴重发回录制时的话题**，用于无设备复现问题与前端联调；
 > 录音格式与时间轴口径见 `docs/Protocol/RecFormat.md` §7.4。

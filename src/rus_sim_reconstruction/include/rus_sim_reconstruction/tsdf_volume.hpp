@@ -24,6 +24,22 @@
 
 namespace RusReconstruction {
 
+    /// 一个 TSDF 数据块的增量（= 前端 `MeshChunkUpdate` 的数据面）
+    ///
+    /// - `chunk_id` ：块索引 (x,y,z) 各 21 位有符号打包（稳定身份）
+    /// - `origin`   ：块世界坐标原点；`verts` 为**块局部**坐标（= 世界 − origin）
+    /// - `revision` ：该块单调版本号（前端 `<= 已应用` 则丢弃）
+    /// - `removed`  ：true = 该块已离开地图（前端移除节点）
+    /// - `verts` / `normals`：三角汤，3 float/顶点（隐式顺序索引）
+    struct ChunkMesh {
+        int64_t chunk_id = 0;
+        Vec3 origin = Vec3::Zero();
+        uint64_t revision = 0;
+        bool removed = false;
+        std::vector<float> verts;
+        std::vector<float> normals;
+    };
+
     class TsdfVolume {
     public:
         struct Options {
@@ -44,8 +60,14 @@ namespace RusReconstruction {
                        double weight = 1.0,
                        bool orient_to_origin = true);
 
-        /// 只重建脏块并刷新合并网格（增量）
+        /// 只重建脏块并刷新合并网格（增量）；同时记录本轮的块增量（见 DrainChunkDeltas）
         void UpdateMesh();
+
+        /// 取出上一轮 UpdateMesh 产生的块增量（upsert/remove），并清空
+        std::vector<ChunkMesh> DrainChunkDeltas();
+
+        /// 全量快照：当前所有有网格的块（用于新连接 / 溢出重同步）
+        std::vector<ChunkMesh> SnapshotChunks() const;
 
         /// 合并网格（三角汤；每三角形 9 个 float 位置 + 9 个 float 法线）
         const std::vector<float>& MeshVertices() const { return mesh_verts_; }
@@ -55,6 +77,14 @@ namespace RusReconstruction {
         size_t BlockCount() const { return blocks_.size(); }
         size_t DirtyBlockCount() const { return dirty_.size(); }
         bool HasDirty() const { return !dirty_.empty(); }
+
+        // 块索引 <-> 稳定 chunk id（各轴 21 位有符号；±约 50km @ 48mm 块）
+        static int64_t PackChunkId(int32_t x, int32_t y, int32_t z);
+        static void    UnpackChunkId(int64_t id, int32_t& x, int32_t& y, int32_t& z);
+
+        double VoxelSize() const { return opt_.voxel_size; }
+        int    BlockVoxels() const { return bs_; }
+        double BlockExtent() const { return bs_ * opt_.voxel_size; }
 
         void Clear();
 
@@ -80,6 +110,7 @@ namespace RusReconstruction {
         BlockKey BlockOfVoxel(int vx, int vy, int vz, int& lx, int& ly, int& lz) const;
         void UpdateVoxel(const Vec3& pos, float sdf, float w);
         void MarkDirtyAround(const BlockKey& k);
+        Vec3 ChunkOrigin(const BlockKey& k) const;
 
         /// 采样全局体素 (vx,vy,vz) 的 sdf；valid=false 表示未知
         bool SampleVoxel(int vx, int vy, int vz, float& sdf) const;
@@ -105,6 +136,10 @@ namespace RusReconstruction {
                            BlockKeyHash> block_mesh_;
         std::vector<float> mesh_verts_;
         std::vector<float> mesh_normals_;
+        // 每块的单调版本号 + 自增计数 + 上一轮增量
+        std::unordered_map<BlockKey, uint64_t, BlockKeyHash> block_rev_;
+        uint64_t next_rev_ = 1;
+        std::vector<ChunkMesh> last_deltas_;
     };
 
 }  // namespace RusReconstruction

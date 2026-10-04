@@ -45,6 +45,32 @@ namespace RusReconstruction {
         return k;
     }
 
+    Vec3 TsdfVolume::ChunkOrigin(const BlockKey& k) const
+    {
+        const double s = bs_ * opt_.voxel_size;
+        return Vec3(k.x * s, k.y * s, k.z * s);
+    }
+
+    int64_t TsdfVolume::PackChunkId(int32_t x, int32_t y, int32_t z)
+    {
+        const uint64_t ux = static_cast<uint32_t>(x) & 0x1FFFFFu;
+        const uint64_t uy = static_cast<uint32_t>(y) & 0x1FFFFFu;
+        const uint64_t uz = static_cast<uint32_t>(z) & 0x1FFFFFu;
+        return static_cast<int64_t>((ux << 42) | (uy << 21) | uz);
+    }
+
+    void TsdfVolume::UnpackChunkId(int64_t id, int32_t& x, int32_t& y, int32_t& z)
+    {
+        auto sext = [](uint32_t v) -> int32_t {
+            v &= 0x1FFFFFu;
+            return (v & 0x100000u) ? static_cast<int32_t>(v | 0xFFE00000u)
+                                   : static_cast<int32_t>(v);
+        };
+        x = sext(static_cast<uint32_t>((static_cast<uint64_t>(id) >> 42) & 0x1FFFFFu));
+        y = sext(static_cast<uint32_t>((static_cast<uint64_t>(id) >> 21) & 0x1FFFFFu));
+        z = sext(static_cast<uint32_t>(static_cast<uint64_t>(id) & 0x1FFFFFu));
+    }
+
     void TsdfVolume::MarkDirtyAround(const BlockKey& k)
     {
         for (int dx = -1; dx <= 1; ++dx)
@@ -253,13 +279,39 @@ namespace RusReconstruction {
 
     void TsdfVolume::UpdateMesh()
     {
+        last_deltas_.clear();
         if (dirty_.empty()) return;
 
         for (const auto& key : dirty_) {
             std::vector<float> v, n;
             PolygonizeBlock(key, v, n);
-            if (v.empty()) block_mesh_.erase(key);
-            else block_mesh_[key] = {std::move(v), std::move(n)};
+            const bool had = block_mesh_.count(key) != 0;
+            if (v.empty()) {
+                block_mesh_.erase(key);
+                if (had) {   // 曾经有网格，现在没了 → remove 增量
+                    ChunkMesh c;
+                    c.chunk_id = PackChunkId(key.x, key.y, key.z);
+                    c.origin = ChunkOrigin(key);
+                    c.removed = true;
+                    c.revision = block_rev_[key] = next_rev_++;
+                    last_deltas_.push_back(std::move(c));
+                }
+            } else {
+                block_mesh_[key] = {v, n};
+                ChunkMesh c;
+                c.chunk_id = PackChunkId(key.x, key.y, key.z);
+                c.origin = ChunkOrigin(key);
+                c.removed = false;
+                c.revision = block_rev_[key] = next_rev_++;
+                const Vec3 o = c.origin;
+                c.verts = v; c.normals = n;
+                for (size_t i = 0; i + 2 < c.verts.size(); i += 3) {
+                    c.verts[i]   -= static_cast<float>(o.x());
+                    c.verts[i+1] -= static_cast<float>(o.y());
+                    c.verts[i+2] -= static_cast<float>(o.z());
+                }
+                last_deltas_.push_back(std::move(c));
+            }
         }
         dirty_.clear();
 
@@ -275,6 +327,37 @@ namespace RusReconstruction {
         }
     }
 
+    std::vector<ChunkMesh> TsdfVolume::DrainChunkDeltas()
+    {
+        std::vector<ChunkMesh> out = std::move(last_deltas_);
+        last_deltas_.clear();
+        return out;
+    }
+
+    std::vector<ChunkMesh> TsdfVolume::SnapshotChunks() const
+    {
+        std::vector<ChunkMesh> out;
+        out.reserve(block_mesh_.size());
+        for (const auto& kv : block_mesh_) {
+            if (kv.second.first.empty()) continue;
+            ChunkMesh c;
+            c.chunk_id = PackChunkId(kv.first.x, kv.first.y, kv.first.z);
+            c.origin = ChunkOrigin(kv.first);
+            c.removed = false;
+            auto it = block_rev_.find(kv.first);
+            c.revision = (it != block_rev_.end()) ? it->second : 0;
+            const Vec3 o = c.origin;
+            c.verts = kv.second.first; c.normals = kv.second.second;
+            for (size_t i = 0; i + 2 < c.verts.size(); i += 3) {
+                c.verts[i]   -= static_cast<float>(o.x());
+                c.verts[i+1] -= static_cast<float>(o.y());
+                c.verts[i+2] -= static_cast<float>(o.z());
+            }
+            out.push_back(std::move(c));
+        }
+        return out;
+    }
+
     void TsdfVolume::Clear()
     {
         blocks_.clear();
@@ -283,6 +366,9 @@ namespace RusReconstruction {
         block_mesh_.clear();
         mesh_verts_.clear();
         mesh_normals_.clear();
+        block_rev_.clear();
+        last_deltas_.clear();
+        next_rev_ = 1;
     }
 
 }  // namespace RusReconstruction
