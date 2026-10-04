@@ -7,8 +7,8 @@
 
 | 文档 | 版本 | 管什么 |
 |------|------|--------|
-| [WsProtocol.md](./WsProtocol.md) | v0.4 | 前端 ⇄ bridge 的 WebSocket 协议：三通道、`command` / `reply` / `event`、`state` / `sensor` 线格式、指令清单、事件清单、扫查时序、前端实现要点 |
-| [RecFormat.md](./RecFormat.md) | v1 | `.rusrec` 记录文件：整体布局、FileHeader、通道表、记录、尾索引、读取流程、回放口径、录制开关口径、容量估算 |
+| [WsProtocol.md](./WsProtocol.md) | v0.4 | 前端 ⇄ bridge 的 WebSocket 协议：四通道（`/control` `/state` `/sensor` `/mesh`）、`command` / `reply` / `event`、`state` / `sensor` / `mesh` 线格式、指令清单、事件清单、扫查时序、前端实现要点 |
+| [RecFormat.md](./RecFormat.md) | v1 | `.rusrec` 记录文件：整体布局、FileHeader、通道表、记录、尾索引、读取流程、录制开关口径、容量估算（回放已移交前端） |
 
 ## 速查
 
@@ -19,6 +19,7 @@
 | `/control` | `command` / `reply` / `event` | 可靠（id 关联回执） |
 | `/state` | 机械臂状态高频流 | 可丢帧（只发最新值） |
 | `/sensor` | 感知二进制帧（压缩点云） | 可丢帧（只发最新一帧） |
+| `/mesh` | 增量网格块帧 | 可靠有序（不丢块） |
 
 ### 模块服务（bridge 调用，均为 `CommandService`）
 
@@ -28,7 +29,7 @@
 | `/planning/command` | 规划与执行 | WsProtocol §4.2 |
 | `/perception/command` | 感知（⚠️ 注册与实现未对齐，见 §4.4） | WsProtocol §4.4 |
 | `/recorder/command` | `recorder_start` / `recorder_stop` / `recorder_status` | WsProtocol §4.8 |
-| `/replayer/command` | 10 条 `replay_*` | WsProtocol §4.7 |
+| `/replayer/command` | ❌ 已废弃（回放移交前端），10 条 `replay_*` 暂留过渡 | WsProtocol §4.7 |
 | （bridge 本地） | `shutdown` / `set_mode` | WsProtocol §4.1 |
 | （扇出） | `stop`（自动模式 → planning + driver） | WsProtocol §4.5 / §4.6 |
 
@@ -38,8 +39,8 @@
 |------|--------|------|
 | `plan_done` | planning | `plan` 成功 |
 | `scan_done` | planning | 伺服执行完毕 / 被 `stop` 中止 |
-| `replay_done` | replayer | 回放播到末尾（`loop=false`） |
-| `error` | planning / replayer | 前置门失败、生成失败、读盘 / CRC 失败 |
+| `replay_done` | ❌ replayer（已废弃） | 回放播到末尾（`loop=false`） |
+| `error` | planning（replayer 已废弃） | 前置门失败、生成失败、读盘 / CRC 失败 |
 | `pre_scan_done` / `motion_done` | —（预留，无发布者） | — |
 
 ### 线格式速记
@@ -54,6 +55,7 @@
 
 // 状态流（/state）：type / timestamp / frame_rate / joint_pos… / flange_pos / tool_index / tool_pose
 // 感知流（/sensor）：uint32 LE 头长 + JSON 头 + 二进制 payload（zstd + int16 量化）
+// 网格流（/mesh）：uint32 LE 头长 + JSON 头(chunks[]) + payload（int16 顶点 + int8 法线 + zstd）
 // 记录文件：64 B FileHeader + ChannelDesc[] + (40 B RecHeader + payload)* + IndexEntry[] + 32 B Footer
 ```
 

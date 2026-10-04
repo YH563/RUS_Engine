@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """rus_sim_recorder 回放节点启动文件
 
+⚠️ 【已废弃 · DEPRECATED】回放职责正在移交**前端**：前端走**共享文件系统**直接读录音
+目录下的 `.rusrec`（见 docs/Protocol/RecFormat.md）自行回放 / 可视化，不再经 ROS 话题。
+本 launch 仅为过渡期兼容保留，待前端回放完成后整体删除。新链路不要再用它。
+
 把 .rusrec 按时间轴重发回录制时的话题（默认原样，可用 topic_prefix 隔离）：
 
   通道 0  /driver/state       RobotState   → 前端「回放」可视化（bridge 已在订阅）

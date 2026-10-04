@@ -131,6 +131,9 @@ namespace RusRecorder {
                             static_cast<unsigned long long>(failed_.load()));
             });
 
+        RCLCPP_WARN(get_logger(),
+            "【已废弃】回放节点（后端）即将移除：回放职责移交前端，前端走共享文件系统直接读"
+            "录音目录下的 .rusrec 自行回放；本节点仅为过渡期兼容保留，新功能不要再依赖。");
         RCLCPP_INFO(get_logger(), "ReplayNode 已启动：录音目录 %s，topic_prefix \"%s\"",
                     std::filesystem::absolute(record_dir_).string().c_str(),
                     topic_prefix_.c_str());

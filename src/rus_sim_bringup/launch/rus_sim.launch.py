@@ -6,14 +6,14 @@
   - rus_sim_driver/launch/driver.launch.py        （驱动 + robot_state_publisher；RViz 已注释）
   - rus_sim_planning/launch/planning.launch.py    （轨迹规划 / 伺服执行）
   - rus_sim_perception/launch/perception.launch.py（实时建图 / 离线点云加载）
-  - rus_sim_recorder/launch/recorder.launch.py    （记录层，仅 record:=true 时拉起）
+  - rus_sim_recorder/launch/recorder.launch.py    （记录层，默认拉起；record:=false 关闭）
 
 用法：
-  ros2 launch rus_sim_bringup rus_sim.launch.py
-  ros2 launch rus_sim_bringup rus_sim.launch.py record:=true              # 同时录制
-  ros2 launch rus_sim_bringup rus_sim.launch.py record:=true record_dir:=/data/run01
-  ros2 launch rus_sim_bringup rus_sim.launch.py record:=true record_autostart:=false  # 起来不录，等 recorder_start
-  ros2 launch rus_sim_bringup rus_sim.launch.py load_test_cloud:=false    # 不加载联调测试点云
+  ros2 launch rus_sim_bringup rus_sim.launch.py                         # 默认整系统 + 录制
+  ros2 launch rus_sim_bringup rus_sim.launch.py record:=false           # 不录制
+  ros2 launch rus_sim_bringup rus_sim.launch.py record_dir:=/data/run01
+  ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=false # 起来不录，等 recorder_start
+  ros2 launch rus_sim_bringup rus_sim.launch.py load_test_cloud:=false  # 不加载联调测试点云
 """
 import os
 
@@ -51,10 +51,11 @@ def generate_launch_description():
         'launch', 'recorder.launch.py')
 
     return LaunchDescription([
-        # 记录层默认关：录制会产生持续磁盘写入（点云通道可达 MB/s 量级）
+        # 记录层默认开（一键整系统即录制）：点云通道可达 MB/s 量级、持续写盘，
+        # 不需要录制时用 record:=false 关闭；磁盘占用由 recorder 的滚动上限约束。
         DeclareLaunchArgument(
-            'record', default_value='false',
-            description='是否同时启动 rus_sim_recorder 录制数据流'),
+            'record', default_value='true',
+            description='是否同时启动 rus_sim_recorder 录制数据流（false = 不录制）'),
         DeclareLaunchArgument(
             'record_dir', default_value='records',
             description='录制输出目录（相对路径按启动工作目录解析）'),

@@ -162,7 +162,7 @@ namespace RusRecorder {
             if (i) ch_desc << ", ";
             ch_desc << channels_[i].channel_id << ":" << channels_[i].topic;
         }
-        RCLCPP_INFO(get_logger(), "%s：%s/%s_<时间戳>.rusrec，通道 %s",
+        RCLCPP_INFO(get_logger(), "%s：%s/%s_<YYYYmmdd_HHMMSS>.rusrec，通道 %s",
                     autostart_ ? "录制已启动（autostart=true）"
                                : "录制待命（autostart=false）：等 recorder_start",
                     output_dir_.c_str(), file_prefix_.c_str(), ch_desc.str().c_str());

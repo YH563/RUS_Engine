@@ -65,11 +65,11 @@ rosdep install --from-paths src --ignore-src -r -y
 colcon build
 source install/setup.bash
 
-# 一键启动（驱动 + 规划 + 感知 + 桥接）
+# 一键启动（驱动 + 规划 + 感知 + 桥接 + 录制；默认启动即录，写到 records/）
 ros2 launch rus_sim_bringup rus_sim.launch.py
 
-# 需要录制时（默认启动即录，写到 records/）
-ros2 launch rus_sim_bringup rus_sim.launch.py record:=true
+# 不需要录制时
+ros2 launch rus_sim_bringup rus_sim.launch.py record:=false
 ```
 
 常用附加能力：

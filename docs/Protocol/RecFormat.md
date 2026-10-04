@@ -185,9 +185,12 @@ ros2 run rus_sim_recorder rus_sim_recorder_inspect <file.rusrec> --dump 5 --json
 ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_status}"
 ```
 
-回放（把录音按时间轴重发回话题，§7.4）：
+回放：**已移交前端**（后端 replayer 标废弃，暂留过渡）。后端只负责把数据录成
+`<records_dir>/*.rusrec`；**前端直接读该目录 + 按本文件格式解码**，自行回放 / 可视化。
+（下列后端回放命令为过渡期兼容保留，新链路不要再用。）
 
 ```bash
+# ❌ 废弃（过渡期保留）：后端把录音重发回话题
 ros2 launch rus_sim_recorder replayer.launch.py                    # 载入 records/ 里第 0 个，等 replay_start
 ros2 launch rus_sim_recorder replayer.launch.py autoplay:=true     # 启动即播
 ros2 launch rus_sim_recorder replayer.launch.py topic_prefix:=/replay   # 与真机共存（话题隔离）
@@ -195,7 +198,7 @@ ros2 launch rus_sim_recorder replayer.launch.py topic_prefix:=/replay   # 与真
 ros2 service call /replayer/command rus_sim_interfaces/srv/CommandService "{command: replay_status}"
 ```
 
-### 7.4 回放（`rus_sim_recorder_replay`）
+### 7.4 回放（`rus_sim_recorder_replay`）❌ 已废弃（移交前端，暂留过渡）
 
 回放把"**什么时候发哪条记录**"与"**这条记录的 payload**"分成两件事：
 

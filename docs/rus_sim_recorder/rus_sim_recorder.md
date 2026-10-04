@@ -7,10 +7,15 @@
 - ✅ 录制：双通道（`/driver/state` + `/sensor/pointcloud`）异步写盘，不阻塞数据流
 - ✅ 运行期开关：`recorder_start` / `recorder_stop` / `recorder_status`（外部可控）
 - ✅ 文件管理：按大小滚动（`_pNNN`）、写缓冲周期落盘、写失败熔断
-- ✅ 离线回放：按录音时间轴重发原话题，支持倍速 / 暂停 / seek / 单步
+- ❌ 离线回放：~~按录音时间轴重发原话题~~ —— **已废弃，移交前端**
 - ✅ 体检工具：离线校验头 / 记录 / CRC / 尾索引，损坏文件可扫描恢复
 
 > 状态标记：✅ 已完成 🚧 进行中 📝 待办 ❌ 废弃
+>
+> **回放职责已移交前端（共享文件系统）**：后端只负责把数据录成 `<records_dir>/*.rusrec`
+> （格式见 [RecFormat.md](../Protocol/RecFormat.md)）；**前端直接读该目录**、自行解码 / 播放 /
+> 可视化，不再经 ROS 话题（因此不会与在线驱动撞话题、无需停驱动）。
+> 后端 `replayer_node`（组件 2）与 `replay_*` 指令**已标记废弃、暂留过渡**，待前端回放完成后再整体删除。
 
 ## 结构
 
@@ -79,7 +84,10 @@ rus_sim_recorder/
 | `record_state` / `state_topic` / `state_max_rate_hz` | bool / string / double | true / `/driver/state` / 0 | 通道 0 开关 / 话题 / 限流（0 = 不限） |
 | `record_sensor` / `sensor_topic` / `sensor_max_rate_hz` | bool / string / double | true / `/sensor/pointcloud` / 0 | 通道 1 开关 / 话题 / 限流（0 = 不限） |
 
-## 组件 2：replayer_node（离线回放）
+## 组件 2：replayer_node（离线回放）❌ 已废弃（移交前端，暂留过渡）
+
+> ⚠️ 以下内容仅描述**过渡期保留的旧实现**，不要再用于新链路：回放已移交前端
+> （前端直读 `records/*.rusrec`，见上方「前端对接」）。待前端就绪后本节连同节点一并删除。
 
 | 项 | 值 |
 |----|----|
@@ -159,8 +167,19 @@ ros2 launch rus_sim_recorder replayer.launch.py                    # 回放 reco
 | 标准库 | `rec_storage`（文件读写 / CRC32 / 字节序处理）不依赖 ROS | ✅ |
 | `rclcpp` / `rus_sim_interfaces` / `rus_sim_utils` / Eigen3 | 节点侧（Eigen3 来自 `rus_sim_utils` 的导出接口） | ✅ |
 
+## 前端对接（共享文件系统）
+
+后端只把数据录成文件，**回放由前端负责**，二者约定：
+
+1. **目录**：后端写 `<output_dir>/<prefix>_<时间戳>.rusrec`；`output_dir` 默认 `records`，
+   **相对路径按 recorder 进程的启动工作目录解析**成绝对路径（启动日志会打印解析后的绝对路径）。
+   → 前端需配置到**同一个绝对目录**；要稳定可用 `record_dir:=/abs/path`（bringup 透传给 recorder）指定绝对路径。
+2. **格式**：前端按 [RecFormat.md](../Protocol/RecFormat.md) 解码（FileHeader / 通道表 / 记录 / 尾索引）。
+   崩溃/截断文件（无尾索引）可顺序扫描恢复，规则同 `recorder_inspect --scan`。
+3. **不再经 ROS 话题**：所以无需停驱动、无撞话题问题；也不用后端的 `replay_*` 指令。
+
 ## 注意
 
 - 录制是**旁路**：只订阅、不发布；停录期间到达的消息不入队、不计 `dropped`。
-- 回放默认发回录制时话题：真机在线时**先停驱动**，或用 `topic_prefix:=/replay` 隔离。
 - 记录文件格式、通道号约定、容量估算见 [RecFormat.md](../Protocol/RecFormat.md)。
+- 后端 `replayer_node` / `replay_*` **已废弃**（暂留过渡），新链路不要使用。

@@ -19,8 +19,9 @@
   ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_start}"
   ros2 run rus_sim_recorder rus_sim_recorder_inspect records/run_*.rusrec
 
-整系统一键（含录制，默认关）:
-  ros2 launch rus_sim_bringup rus_sim.launch.py record:=true
+整系统一键（含录制，默认开）:
+  ros2 launch rus_sim_bringup rus_sim.launch.py              # 默认即录制
+  ros2 launch rus_sim_bringup rus_sim.launch.py record:=false  # 关闭录制
 """
 
 import os

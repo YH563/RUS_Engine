@@ -4,7 +4,7 @@
 
 ## 功能概述
 
-- ✅ WS 三通道：`/control`（指令 / 回执 / 事件）、`/state`（机械臂状态流）、`/sensor`（压缩点云流）
+- ✅ WS 四通道：`/control`（指令 / 回执 / 事件）、`/state`（机械臂状态流）、`/sensor`（压缩点云流）、`/mesh`（增量网格块流，可靠有序）
 - ✅ 指令路由表 + 多模块扇出 + 超时回执聚合（纯转发，无业务逻辑）
 - ✅ 模式切换：自动（默认，planning 协调）/ 手动（直控 driver）
 - ✅ 事件桥接：`/module_events` → `/control` 广播
@@ -41,9 +41,11 @@ rus_sim_bridge/
 | 输入（WS） | `/control` | JSON `command` | `{ id, cmd, args }` |
 | 输入（话题） | `/driver/state` | `RobotState` | → `/state` JSON 流（附实算 `frame_rate`） |
 | 输入（话题） | `/sensor/pointcloud` | `SensorFrame` | → `/sensor` 二进制帧（`uint32` 头长 + JSON 头 + payload） |
+| 输入（话题） | `/sensor/mesh` | `MeshFrame` | → `/mesh` 二进制帧（增量网格块，可靠有序） |
 | 输入（话题） | `/module_events` | `ModuleEvent` | → `event` 广播到所有 `/control` 连接 |
 | 输出（WS） | `/control` | `reply` / `event` | 回执只发发起连接；事件广播 |
 | 输出（WS） | `/state` / `/sensor` | JSON / binary | 覆盖式：只推最新一帧，慢客户端丢帧 |
+| 输出（WS） | `/mesh` | binary | **可靠有序队列**：逐会话按序入队，不丢块（溢出跳帧，靠后端周期性全量快照重同步） |
 
 ### 下游服务调用（CommandService）
 
@@ -53,7 +55,7 @@ rus_sim_bridge/
 | `/planning/command` | `set_start_pose` / `set_end_pose` / `plan` / `execute` / `stop` / `pause` / `resume` / `reset` / `query_motion_done` | 自动模式下 `stop` = 扇出 `{PLANNING, DRIVER}` |
 | `/perception/command` | `pre_scan_start` / `pre_scan_end` / `query_prescan_done` | ⚠️ 路由已注册但 perception 未实现，转发后返回 `unknown command` |
 | `/recorder/command` | `recorder_start` / `recorder_stop` / `recorder_status` | 不随 `set_mode` 切换 |
-| `/replayer/command` | 10 条 `replay_*` | 不随 `set_mode` 切换 |
+| `/replayer/command` | ❌ 已废弃（回放移交前端），10 条 `replay_*` 暂留过渡 | 不随 `set_mode` 切换 |
 
 ### 本地处理（不转发）
 
@@ -75,6 +77,8 @@ rus_sim_bridge/
 | `state_topic` | string | `/driver/state` | 状态流数据源 |
 | `sensor_topic` | string | `/sensor/pointcloud` | 感知流数据源 |
 | `forward_sensor` | bool | true | false = 不订阅感知流（`/sensor` 通道无数据） |
+| `mesh_topic` | string | `/sensor/mesh` | 增量网格流数据源 |
+| `forward_mesh` | bool | true | false = 不订阅网格流（`/mesh` 通道无数据） |
 | `timeout_ms` | int | 5000 | 下游服务调用超时（毫秒） |
 | `drain_ms` | int | 10 | 指令队列出队周期（毫秒） |
 
@@ -89,3 +93,4 @@ rus_sim_bridge/
 
 - 感知订阅 QoS 必须与发布端匹配（reliable + `transient_local`），否则 DDS 不建通路（一帧都收不到）。
 - `/state` / `/sensor` 为覆盖式通道：同一版本每会话只推一次（`*_gen` 代次判定），避免 lws 重复回调造成重发风暴。
+- `/mesh` 是**可靠有序队列**（不是覆盖式）：增量块/`remove` 丢了会让前端网格腐化，故逐会话按序入队；队列超上限时慢会话跳帧，靠后端 `scope="map"` 全量快照收敛。
