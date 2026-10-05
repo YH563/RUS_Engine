@@ -116,6 +116,14 @@ perception_node:
     statistical_mean_k: 50           # 统计滤波邻域点数
     statistical_std_dev_mul: 1.0     # 统计滤波标准差倍数
 
+    # ④ 均匀重采样（链尾可选阶段）：MLS 平滑 + 网格贪心均匀采样，保证点间距 ≥ target。
+    #   开启后输出点云间距更均匀 → 有利于规划建图（k-NN/Gabriel）与点云图增量更新。
+    #   代价：MLS 有计算量（内部先按 target 体素预降密以约束开销）；默认关。
+    enable_resample: false           # 均匀重采样开关（默认关）
+    resample_target_spacing: 0.005   # 目标点间距（米）
+    resample_mls_radius: 0.015       # MLS 局部拟合半径（≈2~3×target）
+    resample_mls_order: 2            # MLS 多项式阶数
+
     # ── 标定后的相机相对法兰的变换矩阵（16 元素行优先）──
     # 点云变换：T_base = T_base_flange * camera_to_flange（驱动输出法兰位姿）
     # 由旧 camera_to_end 换算：camera_to_flange = Trans(0,0,-flange_offset) * camera_to_end

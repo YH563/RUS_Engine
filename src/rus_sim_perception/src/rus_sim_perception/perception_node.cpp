@@ -95,6 +95,10 @@ namespace {
         param.enable_voxel            = declare_parameter<bool>("enable_voxel_filter", true);
         param.statistical_mean_k      = declare_parameter<int>("statistical_mean_k", 50);
         param.statistical_std_dev_mul = static_cast<float>(declare_parameter<double>("statistical_std_dev_mul", 1.0));
+        param.enable_resample          = declare_parameter<bool>("enable_resample", false);
+        param.resample_target_spacing  = static_cast<float>(declare_parameter<double>("resample_target_spacing", 0.005));
+        param.resample_mls_radius      = static_cast<float>(declare_parameter<double>("resample_mls_radius", 0.015));
+        param.resample_mls_order       = declare_parameter<int>("resample_mls_order", 2);
 
         // ── 相机→法兰 标定矩阵（16 元素行优先；未配置则单位阵）──
         // 点云变换：T_base = T_base_flange * camera_to_flange
@@ -121,12 +125,14 @@ namespace {
         map_.SetMaxPoints(mapping_mode_ == "rolling" ? map_max_points_ : 0);
 
         // 滤波链生效值（效果排查用：与 realsense-viewer 对照时先确认这里全为"关"）
-        RCLCPP_INFO(get_logger(), "滤波链：直通=%s 统计=%s(%d 近邻/%.1fσ) 体素=%s(叶=%.4fm)",
+        RCLCPP_INFO(get_logger(), "滤波链：直通=%s 统计=%s(%d 近邻/%.1fσ) 体素=%s(叶=%.4fm) 重采样=%s(间距=%.4fm)",
                     param.enable_passthrough ? "开" : "关",
                     param.enable_statistical ? "开" : "关",
                     param.statistical_mean_k, param.statistical_std_dev_mul,
                     param.enable_voxel ? "开" : "关",
-                    param.voxel_leaf_size);
+                    param.voxel_leaf_size,
+                    param.enable_resample ? "开" : "关",
+                    param.resample_target_spacing);
 
         // ── 回调组：处理定时器独立，避免阻塞数据订阅回调 ──
         process_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);

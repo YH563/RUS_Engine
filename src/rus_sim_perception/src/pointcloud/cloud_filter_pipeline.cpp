@@ -7,6 +7,8 @@
 #include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl/filters/voxel_grid.h>
 
+#include "pointcloud/cloud_resampler.hpp"
+
 namespace RusPerception::PointCloud {
 
     bool CloudFilterPipeline::Apply(CloudRGB& cloud, std::vector<FilterStageStat>* stats)
@@ -34,6 +36,10 @@ namespace RusPerception::PointCloud {
         }
         if (param_.enable_voxel) {
             if (!run("voxel", &CloudFilterPipeline::voxel)) return false;
+        }
+        // 均匀重采样（链尾）：MLS 平滑 + 网格贪心均匀采样，保证间距 ≥ target
+        if (param_.enable_resample) {
+            if (!run("resample", &CloudFilterPipeline::resample)) return false;
         }
         return true;
     }
@@ -82,6 +88,27 @@ namespace RusPerception::PointCloud {
         vg.setInputCloud(cloud.makeShared());
         vg.setLeafSize(param_.voxel_leaf_size, param_.voxel_leaf_size, param_.voxel_leaf_size);
         vg.filter(cloud);
+        return true;
+    }
+
+    bool CloudFilterPipeline::resample(CloudRGB& cloud)
+    {
+        if (cloud.empty()) return false;
+        // 自含重采样链：体素预降密(到 target) → MLS 平滑+法线 → 网格贪心均匀采样。
+        // 体素预降密用于**约束 MLS 的计算量**；SOR 不复用（链上已有 statistical 阶段）。
+        ResampleOptions ro;
+        ro.enable_voxel = true;
+        ro.voxel_leaf = param_.resample_target_spacing;
+        ro.enable_sor = false;
+        ro.enable_mls = true;
+        ro.mls_search_radius = param_.resample_mls_radius;
+        ro.mls_target_spacing = param_.resample_target_spacing;
+        ro.mls_order = param_.resample_mls_order;
+
+        ResampleResult r;
+        Resample(cloud, r, ro);
+        if (r.cloud.empty()) return false;
+        cloud = std::move(r.cloud);   // 位置+颜色；法线在此阶段丢弃（pipeline 输出为 CloudRGB）
         return true;
     }
 

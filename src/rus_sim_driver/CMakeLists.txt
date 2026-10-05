@@ -183,3 +183,14 @@ install(DIRECTORY launch/
 install(DIRECTORY config/
     DESTINATION share/${PROJECT_NAME}/config
 )
+
+# ── 单元测试（指令解析：纯逻辑，链接 driver_core）──
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_cmd_parser test/test_cmd_parser.cpp)
+  target_link_libraries(test_cmd_parser driver_core)
+  # RPATH：让测试可执行文件找到 libdriver_core.so / libfairino.so / EAIK
+  set_target_properties(test_cmd_parser PROPERTIES
+      BUILD_RPATH "${SDK_LIB_DIR};${CMAKE_CURRENT_BINARY_DIR}/third_party/EAIK;${CMAKE_CURRENT_BINARY_DIR}"
+      INSTALL_RPATH "${SDK_LIB_DIR};${CMAKE_INSTALL_PREFIX}/lib")
+endif()

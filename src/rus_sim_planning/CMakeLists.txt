@@ -56,6 +56,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_trajectory_interpolator test/test_trajectory_interpolator.cpp)
   # ament_add_gtest 用 plain signature，链接 planning_core 带出全部依赖与 include
   target_link_libraries(test_trajectory_interpolator planning_core)
+  ament_add_gtest(test_trajectory_generator test/test_trajectory_generator.cpp)
+  target_link_libraries(test_trajectory_generator planning_core)
 endif()
 
 ament_package()

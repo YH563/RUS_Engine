@@ -54,6 +54,7 @@ add_library(perception_core SHARED
   src/components/sensor_encoder.cpp
   src/pointcloud/spatial_transformer.cpp
   src/pointcloud/cloud_filter_pipeline.cpp
+  src/pointcloud/cloud_resampler.cpp
   src/pointcloud/cloud_io.cpp
   src/pointcloud/map_manager.cpp
 )
@@ -106,5 +107,19 @@ install(TARGETS rus_sim_gen_test_cloud DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch
   PATTERN "__pycache__" EXCLUDE)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
+
+# ── 导出（供下游 include / 链接；如 reconstruction 示例复用 cloud_resampler）──
+install(DIRECTORY include/ DESTINATION include)
+ament_export_include_directories(include)
+ament_export_libraries(perception_core)
+
+# ── 单元测试（纯算法模块，无 ROS 运行时）──
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_perception test/test_perception.cpp)
+  target_link_libraries(test_perception perception_core)
+  ament_add_gtest(test_cloud_resampler test/test_cloud_resampler.cpp)
+  target_link_libraries(test_cloud_resampler perception_core)
+endif()
 
 ament_package()

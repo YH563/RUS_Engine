@@ -4,9 +4,12 @@
 #include <cmath>
 #include <random>
 
-#include "rus_sim_reconstruction/cloud_resampler.hpp"
+#include "pointcloud/cloud_resampler.hpp"
 
-using namespace RusReconstruction;
+using namespace RusPerception;              // CloudRGB
+using namespace RusPerception::PointCloud;  // Resample / ResampleOptions / ...
+
+
 
 // 非均匀密度平面（中心密、边缘疏）→ 重采样后间距集中在目标附近
 TEST(CloudResampler, UniformizesSpacing)

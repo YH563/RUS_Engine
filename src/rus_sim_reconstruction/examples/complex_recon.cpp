@@ -14,11 +14,15 @@
 #include <vector>
 
 #include <pcl/filters/radius_outlier_removal.h>
-#include "rus_sim_reconstruction/cloud_resampler.hpp"
+#include "pointcloud/cloud_resampler.hpp"   // 重采样实现位于 rus_sim_perception
 #include "rus_sim_reconstruction/tsdf_volume.hpp"
 
 using namespace RusReconstruction;
-using CloudRGB = RusReconstruction::CloudRGB;
+using CloudRGB = RusPerception::CloudRGB;   // PCL 彩色点云（perception 定义）
+// 重采样（perception）与本文件空间隔离，显式引入
+using RusPerception::PointCloud::Resample;
+using RusPerception::PointCloud::ResampleOptions;
+using RusPerception::PointCloud::ResampleResult;
 
 namespace {
 constexpr double kPi = 3.14159265358979323846;

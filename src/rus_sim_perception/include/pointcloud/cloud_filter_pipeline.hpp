@@ -27,6 +27,11 @@ namespace RusPerception::PointCloud {
         bool enable_passthrough = true;       // 直通滤波（base_link 系场景 ROI 裁剪）
         bool enable_statistical = false;      // 统计滤波（KDTree k 近邻开销大，高频处理建议关闭）
         bool enable_voxel = true;             // 体素降采样（降带宽，点变稀）
+        // 均匀重采样（链尾可选阶段）：MLS 平滑 + 网格贪心均匀采样（间距 ≥ target）
+        bool  enable_resample = false;        // 默认关；开则输出点间距更均匀（利于轨迹/建图）
+        float resample_target_spacing = 0.005f; // 目标点间距（米）
+        float resample_mls_radius = 0.015f;     // MLS 局部拟合半径（≈2~3×target）
+        int   resample_mls_order = 2;           // MLS 多项式阶数
 
         // ── 各阶段参数（关闭时忽略）──
         float voxel_leaf_size = 0.005f;       // 体素大小（米）；≤0 视为未配置并跳过
@@ -65,6 +70,7 @@ namespace RusPerception::PointCloud {
         bool passthrough(CloudRGB& cloud);
         bool statistical(CloudRGB& cloud);
         bool voxel(CloudRGB& cloud);
+        bool resample(CloudRGB& cloud);    // MLS 平滑 + 均匀采样（间距 ≥ target）
 
         FilterParameter param_;
     };

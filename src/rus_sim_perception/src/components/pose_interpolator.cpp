@@ -9,7 +9,8 @@ namespace RusPerception {
 
     bool PoseInterpolator::Add(double stamp, const Eigen::Isometry3d& pose)
     {
-        if (stamp <= Newest()) return false;  // 乱序 / 重复帧丢弃
+        // 乱序 / 重复帧丢弃；空缓冲时 Newest() 为 0，不能据此拒绝首帧（stamp 可能为 0）
+        if (!buffer_.empty() && stamp <= buffer_.back().stamp) return false;
         buffer_.push_back({stamp, pose});
         while (buffer_.size() > max_cache_) buffer_.pop_front();
         return true;

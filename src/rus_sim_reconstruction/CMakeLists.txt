@@ -14,6 +14,8 @@ find_package(sensor_msgs REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(rus_sim_interfaces REQUIRED)
 find_package(rus_sim_utils REQUIRED)
+# 均匀重采样（cloud_resampler）已移入 perception；示例复用其实现
+find_package(rus_sim_perception REQUIRED)
 # zstd（/mesh payload 压缩；libzstd-dev）
 find_path(ZSTD_INCLUDE_DIR zstd.h)
 find_library(ZSTD_LIBRARY zstd)
@@ -45,19 +47,11 @@ install(TARGETS reconstruction_core
 )
 install(DIRECTORY include/ DESTINATION include)
 
-# ── PCL 点云预处理库（均匀重采样）──
-add_library(reconstruction_pcl SHARED src/cloud_resampler.cpp)
-target_include_directories(reconstruction_pcl PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${PCL_INCLUDE_DIRS})
-target_link_libraries(reconstruction_pcl Eigen3::Eigen ${PCL_LIBRARIES})
-install(TARGETS reconstruction_pcl LIBRARY DESTINATION lib ARCHIVE DESTINATION lib)
-
-# 重采样工具（PCD → 间距分布 → PCD）
+# 重采样工具（PCD → 间距分布 → PCD）；重采样实现现在 perception（cloud_resampler）
 add_executable(rus_sim_recon_resample examples/resample_tool.cpp)
 target_include_directories(rus_sim_recon_resample PRIVATE ${PCL_INCLUDE_DIRS})
-target_link_libraries(rus_sim_recon_resample reconstruction_pcl ${PCL_LIBRARIES})
+target_link_libraries(rus_sim_recon_resample ${PCL_LIBRARIES})
+ament_target_dependencies(rus_sim_recon_resample rus_sim_perception)
 install(TARGETS rus_sim_recon_resample DESTINATION lib/${PROJECT_NAME})
 
 # ── 离线 demo（合成场景 → PLY，供可视化对比）──
@@ -82,7 +76,8 @@ install(TARGETS rus_sim_recon_live_surfel_mesh DESTINATION lib/${PROJECT_NAME})
 # ── 一次性复杂点云重建（滤波链 → 稀疏 TSDF → 网格）──
 add_executable(rus_sim_recon_complex examples/complex_recon.cpp)
 target_include_directories(rus_sim_recon_complex PRIVATE ${PCL_INCLUDE_DIRS})
-target_link_libraries(rus_sim_recon_complex reconstruction_core reconstruction_pcl ${PCL_LIBRARIES})
+target_link_libraries(rus_sim_recon_complex reconstruction_core ${PCL_LIBRARIES})
+ament_target_dependencies(rus_sim_recon_complex rus_sim_perception)
 install(TARGETS rus_sim_recon_complex DESTINATION lib/${PROJECT_NAME})
 
 # ── 实时：完整滤波链 → 稀疏 TSDF → 增量网格（PCL + OpenGL）──
@@ -90,8 +85,9 @@ add_executable(rus_sim_recon_live_tsdf_filtered examples/live_tsdf_filtered_gl.c
 target_include_directories(rus_sim_recon_live_tsdf_filtered PRIVATE
   ${GLFW_INCLUDE_DIRS} ${GLEW_INCLUDE_DIRS} ${PCL_INCLUDE_DIRS})
 target_link_libraries(rus_sim_recon_live_tsdf_filtered
-  reconstruction_core reconstruction_pcl
+  reconstruction_core
   ${GLFW_LIBRARIES} ${GLEW_LIBRARIES} OpenGL::GL ${PCL_LIBRARIES} ${CMAKE_DL_LIBS})
+ament_target_dependencies(rus_sim_recon_live_tsdf_filtered rus_sim_perception)
 install(TARGETS rus_sim_recon_live_tsdf_filtered DESTINATION lib/${PROJECT_NAME})
 
 # ── 面元 → 网格（GP3）──
@@ -181,9 +177,6 @@ if(BUILD_TESTING)
   target_link_libraries(test_surfel_map reconstruction_core)
   ament_add_gtest(test_tsdf test/test_tsdf.cpp)
   target_link_libraries(test_tsdf reconstruction_core)
-  ament_add_gtest(test_cloud_resampler test/test_cloud_resampler.cpp)
-  target_include_directories(test_cloud_resampler PRIVATE ${PCL_INCLUDE_DIRS})
-  target_link_libraries(test_cloud_resampler reconstruction_pcl ${PCL_LIBRARIES})
 endif()
 
 ament_package()

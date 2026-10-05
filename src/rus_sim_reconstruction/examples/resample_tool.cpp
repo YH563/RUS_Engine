@@ -8,9 +8,10 @@
 
 #include <pcl/io/pcd_io.h>
 
-#include "rus_sim_reconstruction/cloud_resampler.hpp"
+#include "pointcloud/cloud_resampler.hpp"   // 重采样实现位于 rus_sim_perception
 
-using namespace RusReconstruction;
+using namespace RusPerception;              // CloudRGB
+using namespace RusPerception::PointCloud;  // Resample / ResampleOptions / ...
 
 // 写出带法线的 ASCII PLY（x y z nx ny nz red green blue），供 Poisson 重建用
 static void WritePly(const std::string& path, const ResampleResult& r)

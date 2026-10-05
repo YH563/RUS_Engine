@@ -1,4 +1,4 @@
-#include "rus_sim_reconstruction/cloud_resampler.hpp"
+#include "pointcloud/cloud_resampler.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -12,7 +12,7 @@
 #include <pcl/surface/mls.h>
 #include <pcl/kdtree/kdtree_flann.h>
 
-namespace RusReconstruction {
+namespace RusPerception::PointCloud {
 
     namespace {
         // ── 网格贪心均匀采样：保证任意两点间距 ≥ min_dist（近似 Poisson-disk）──
@@ -183,4 +183,4 @@ namespace RusReconstruction {
         return st;
     }
 
-}  // namespace RusReconstruction
+}  // namespace RusPerception::PointCloud

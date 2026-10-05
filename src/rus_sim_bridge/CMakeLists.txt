@@ -42,4 +42,11 @@ install(DIRECTORY launch/ DESTINATION share/${PROJECT_NAME}/launch
   PATTERN "__pycache__" EXCLUDE)
 install(DIRECTORY config/ DESTINATION share/${PROJECT_NAME}/config)
 
+# ── 单元测试（路由注册表：header-only，仅依赖 rus_sim_utils）──
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_command_registry test/test_command_registry.cpp)
+  ament_target_dependencies(test_command_registry rus_sim_utils)
+endif()
+
 ament_package()
