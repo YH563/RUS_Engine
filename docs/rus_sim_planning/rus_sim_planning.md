@@ -50,8 +50,8 @@ rus_sim_planning/
 
 | 指令 | args | 说明 |
 |------|------|------|
-| `set_start_pose` | ≥3（3 = 位置 / 6 = 位置+RPY / 7 = 位置+四元数） | 设置扫查起点 |
-| `set_end_pose` | ≥3（同上） | 设置扫查终点 |
+| `set_start_pose` | ≥3（3=位置 / 6=位置+RPY / 7=位置+四元数）；**无参** = 当前 TCP 位姿 | 设置扫查起点 |
+| `set_end_pose` | 同上 | 设置扫查终点 |
 | `plan` | 无 | 预扫查门 + 起终点门 → 生成轨迹；成功发 `plan_done`，失败发 `error` |
 | `execute` | 无 | `movel` 到起点 → `servo_start` → 125 Hz `servo_cart`；结束 / 中止发 `scan_done` |
 | `pause` / `resume` | 无 | 暂停 / 恢复伺服下发 |
@@ -59,6 +59,7 @@ rus_sim_planning/
 | `query_motion_done` | 无 | `[0/1]`：执行中或暂停中 = 0，空闲 = 1 |
 | `stop` | 无 | 中止执行（bridge 自动模式扇出 `{PLANNING, DRIVER}`） |
 | `pre_scan_done` | — | **前端在半自动建图完成后下发**：抓取当前地图快照初始化轨迹生成器（置预扫查门）；`command_types.hpp` 有结构体、bridge 已注册到 PLANNING |
+| `pre_scan_start` / `pre_scan_end` | — | **兼容**：`pre_scan_start` 空操作确认；`pre_scan_end` 等价 `pre_scan_done`（均 → PLANNING）|
 
 ### 事件（→ `/module_events`）
 

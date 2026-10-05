@@ -37,8 +37,10 @@ namespace rus_sim_bridge {
         // 前端在半自动建图完成后下发 pre_scan_done：由 planning 抓取当前点云地图
         // 快照初始化轨迹生成器（置 prescan_done_ 门），之后 plan 才放行；
         // query_prescan_done 同属 planning 状态查询。
-        registry_.Register(CmdName::kPreScanStart,     {Module::PERCEPTION});
-        registry_.Register(CmdName::kPreScanEnd,       {Module::PERCEPTION});
+        // 兼容：pre_scan_start（空操作确认）/ pre_scan_end（等价 pre_scan_done）也路由到
+        // planning —— 前端既有流程用这对指令名；旧设计中此二者属 perception（未实现）。
+        registry_.Register(CmdName::kPreScanStart,     {Module::PLANNING});
+        registry_.Register(CmdName::kPreScanEnd,       {Module::PLANNING});
         registry_.Register(CmdName::kPreScanDone,      {Module::PLANNING});
         registry_.Register(CmdName::kQueryPreScanDone, {Module::PLANNING});
 

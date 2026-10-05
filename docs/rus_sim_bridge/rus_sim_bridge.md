@@ -53,8 +53,8 @@ rus_sim_bridge/
 | 服务 | 覆盖指令 | 备注 |
 |------|---------|------|
 | `/driver/command` | 驱动 / 运动 / 仿真 / 工具坐标系 | 手动模式下 `stop`、`pause`、`resume`、`reset`、`query_motion_done` 也走这里 |
-| `/planning/command` | `set_start_pose` / `set_end_pose` / `plan` / `execute` / `stop` / `pause` / `resume` / `reset` / `query_motion_done` | 自动模式下 `stop` = 扇出 `{PLANNING, DRIVER}` |
-| `/perception/command` | `pre_scan_start` / `pre_scan_end` / `query_prescan_done` | ⚠️ 路由已注册但 perception 未实现，转发后返回 `unknown command` |
+| `/planning/command` | `pre_scan_done` / `pre_scan_start`（兼容确认）/ `pre_scan_end`（=done）/ `set_start_pose` / `set_end_pose` / `plan` / `execute` / `stop` / `pause` / `resume` / `reset` / `query_prescan_done` / `query_motion_done` | 自动模式下 `stop` = 扇出 `{PLANNING, DRIVER}`；`set_*_pose` 无参用当前 TCP 位姿 |
+| `/perception/command` | （暂无）`map_clear` / `load_cloud` 未注册 | 旧 `pre_scan_start/end` 已改路由到 planning |
 | `/recorder/command` | `recorder_start` / `recorder_stop` / `recorder_status` | 不随 `set_mode` 切换 |
 | `/replayer/command` | ❌ 已废弃（回放移交前端），10 条 `replay_*` 暂留过渡 | 不随 `set_mode` 切换 |
 

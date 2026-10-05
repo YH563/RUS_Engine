@@ -6,7 +6,9 @@
 
 - ✅ 四种数据源：`realsense`（直连）/ `ros_topic` / `replay`（离线 PCD）/ `auto`
 - ✅ 位姿时间对齐（`/driver/state` 插值）与点云坐标变换到 `base_link`
-- ✅ 点云滤波链：直通 / 体素 / 统计（各阶段可独立开关）
+- ✅ 点云滤波链：直通 / 体素 / 统计 / **均匀重采样**（各阶段可独立开关）
+- ✅ 均匀重采样（`cloud_resampler`：Voxel→MLS 平滑→网格贪心均匀采样）：输出点间距均匀，利于
+  规划建图（k-NN/Gabriel）与点云图增量更新；**该实现已迁入本包**，reconstruction 示例复用
 - ✅ 累积建图：`none` / `rolling`（上限降采样）/ `accumulate`
 - ✅ 前端压缩帧：zstd + int16 量化 + `range_min/max`（`SensorFrame`）
 - 🚧 超声图像通路（`SensorFrame::TYPE_ULTRASOUND` 预留）
@@ -19,7 +21,7 @@
 rus_sim_perception/
 ├── include/rus_sim_perception/perception_node.hpp
 ├── include/camera/          # point_cloud_source（接口）/ realsense / ros_topic / replay / source_factory / frame_slot
-├── include/pointcloud/      # cloud_filter_pipeline / map_manager / spatial_transformer / cloud_io
+├── include/pointcloud/      # cloud_filter_pipeline / cloud_resampler / map_manager / spatial_transformer / cloud_io
 ├── include/components/      # pose_interpolator（位姿插值）/ sensor_encoder（zstd+量化）/ types
 ├── src/                     # 上述实现 + main.cpp + tools/gen_test_cloud.cpp
 ├── config/perception_params.yaml
@@ -80,6 +82,7 @@ rus_sim_perception/
 | `input_pcd` / `pcd_dir` | 启动即加载的点云（`base_link` 系场景）/ 可切换的 PCD 目录 |
 | `enable_passthrough_filter` / `enable_voxel_filter` / `enable_statistical_filter` | 三级滤波开关（仓库当前均为 false，效果对齐阶段） |
 | `voxel_leaf_size` / `passthrough_field` / `passthrough_limit_min,_max` / `statistical_mean_k` / `statistical_std_dev_mul` | 各级滤波参数（`passthrough` 为 `base_link` 系 ROI，不是相机 FOV） |
+| `enable_resample` / `resample_target_spacing` / `resample_mls_radius` / `resample_mls_order` | 均匀重采样（链尾可选，默认关）：目标间距（0.005 m）/ MLS 半径 / 多项式阶数 |
 
 ## 启动 / 常用
 

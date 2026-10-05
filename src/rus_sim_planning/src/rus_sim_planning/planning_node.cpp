@@ -83,34 +83,57 @@ namespace RusSimPlanning {
         (void)req_header;
         using namespace RusUtils::CmdName;
 
+        // 起/终点解算：优先用指令参数（[x,y,z,...]）；**无参时回退当前 TCP 位姿**
+        // （前端"记录当前位姿为起/终点"的既有流程；位姿来自 /driver/state 的 tool_pose）
+        auto resolve_pose = [this](const std::vector<double>& args,
+                                   std::vector<double>& out) -> bool {
+            out = args;
+            if (out.size() >= 3) return true;
+            const auto& st = interpolator_.LatestState();
+            if (st.flange_pos.size() >= 3) {
+                out.assign(st.flange_pos.data(), st.flange_pos.data() + st.flange_pos.size());
+                return true;
+            }
+            return false;
+        };
+
         if (req->command == kSetStartPose) {
-            if (req->args.size() < 3) {
+            std::vector<double> pose_args;
+            if (!resolve_pose(req->args, pose_args)) {
                 res->success = false;
-                res->message = "set_start_pose 需要 ≥3 个参数 [x,y,z,...]";
-                RCLCPP_WARN(get_logger(), "set_start_pose 参数不足");
+                res->message = "set_start_pose 需要 ≥3 个参数 [x,y,z,...]（或先有驱动位姿）";
+                RCLCPP_WARN(get_logger(), "set_start_pose 参数不足且无当前位姿");
                 return;
             }
-            start_pose_ = MakePose(req->args);
+            start_pose_ = MakePose(pose_args);
             res->success = true;
             res->message = "start_pose set";
             RCLCPP_INFO(get_logger(), "起点已设置: (%.3f, %.3f, %.3f)",
                 start_pose_->position.x, start_pose_->position.y, start_pose_->position.z);
         }
         else if (req->command == kSetEndPose) {
-            if (req->args.size() < 3) {
+            std::vector<double> pose_args;
+            if (!resolve_pose(req->args, pose_args)) {
                 res->success = false;
-                res->message = "set_end_pose 需要 ≥3 个参数 [x,y,z,...]";
-                RCLCPP_WARN(get_logger(), "set_end_pose 参数不足");
+                res->message = "set_end_pose 需要 ≥3 个参数 [x,y,z,...]（或先有驱动位姿）";
+                RCLCPP_WARN(get_logger(), "set_end_pose 参数不足且无当前位姿");
                 return;
             }
-            goal_pose_ = MakePose(req->args);
+            goal_pose_ = MakePose(pose_args);
             res->success = true;
             res->message = "end_pose set";
             RCLCPP_INFO(get_logger(), "终点已设置: (%.3f, %.3f, %.3f)",
                 goal_pose_->position.x, goal_pose_->position.y, goal_pose_->position.z);
         }
-        else if (req->command == kPreScanDone) {
+        else if (req->command == kPreScanStart) {
+            // 兼容前端既有流程：预扫查开始（planning 侧无需动作，仅确认成功）
+            res->success = true;
+            res->message = "pre_scan started";
+            RCLCPP_INFO(get_logger(), "预扫查开始（兼容指令 pre_scan_start）");
+        }
+        else if (req->command == kPreScanDone || req->command == kPreScanEnd) {
             // 外部（医生完成手动扫查）触发：取最新点云一次性初始化轨迹生成器
+            // （pre_scan_end 为兼容别名，等价 pre_scan_done，供前端既有流程）
             if (!cloud_cache_ || cloud_cache_->data.empty()) {
                 res->success = false;
                 res->message = "pre_scan_done failed: 尚未收到点云";

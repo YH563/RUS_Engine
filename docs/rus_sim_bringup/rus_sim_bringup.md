@@ -34,9 +34,9 @@ rus_sim_bringup/
 ## 启动
 
 ```bash
-ros2 launch rus_sim_bringup rus_sim.launch.py                        # 全栈（默认含录制，启动即录）
-ros2 launch rus_sim_bringup rus_sim.launch.py record:=false          # 关闭录制
-ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=false  # 录制备好待命，等前端 recorder_start
+ros2 launch rus_sim_bringup rus_sim.launch.py                        # 全栈（默认含录制节点，待命，等前端 recorder_start）
+ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=true  # 起来即录
+ros2 launch rus_sim_bringup rus_sim.launch.py record:=false          # 不拉起录制节点
 ros2 launch rus_sim_bringup rus_sim.launch.py load_test_cloud:=true  # 灌入联调测试点云
 ros2 launch rus_sim_bringup rus_sim.launch.py --show-args            # 查看全部参数
 ```
@@ -45,9 +45,9 @@ ros2 launch rus_sim_bringup rus_sim.launch.py --show-args            # 查看全
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `record` | `true` | 是否同时拉起 `rus_sim_recorder/launch/recorder.launch.py`（`false` 关闭录制） |
+| `record` | `true` | 是否拉起 `rus_sim_recorder` 节点（`false` = 完全不拉起；节点起来默认**待命**） |
 | `record_dir` | `records` | 录制输出目录（转发给 recorder） |
-| `record_autostart` | `true` | 录制是否启动即开始；`false` = 起来待命，由前端 `recorder_start` 开始 |
+| `record_autostart` | `false` | 是否启动即录；默认 `false` = 待命，由前端 `recorder_start` 开始；`true` = 起来即录 |
 | `load_test_cloud` | `false` | 感知层启动时加载联调测试点云（仅联调） |
 | `input_pcd` | `~/.rus_sim/test_data/test_cloud.pcd`（存在时） | 联调点云路径（`base_link` 系），受 `load_test_cloud` 控制 |
 

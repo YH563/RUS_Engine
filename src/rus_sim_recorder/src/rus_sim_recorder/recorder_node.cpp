@@ -60,7 +60,7 @@ namespace RusRecorder {
         // ── 输出 / 落盘参数 ──
         enabled_            = declare_parameter<bool>("enabled", true);
         // 启动即录（true = 等价于起来就收到一次 recorder_start；false = 等外部指令）
-        autostart_          = declare_parameter<bool>("autostart", true);
+        autostart_          = declare_parameter<bool>("autostart", false);
         output_dir_         = declare_parameter<std::string>("output_dir", "records");
         file_prefix_        = declare_parameter<std::string>("file_prefix", "run");
         const int max_mb    = declare_parameter<int>("max_file_size_mb", 512);

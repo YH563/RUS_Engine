@@ -9,19 +9,21 @@
 
 录制开关（运行期可控，见 docs/Protocol/WsProtocol.md §4.8）：
   /recorder/command：recorder_start（开始）/ recorder_stop（停录并封存）/ recorder_status（查询）
-  默认 autostart=true 起来就录；autostart:=false 时起来待命，等 recorder_start。
+  默认 autostart=false：节点起来处于待命，由前端主动发 recorder_start 才开始录
+（recorder_stop 停录并封存）。
 
 用法:
-  ros2 launch rus_sim_recorder recorder.launch.py                       # 默认录到 records/
+  ros2 launch rus_sim_recorder recorder.launch.py                       # 起来待命，等 recorder_start
+  ros2 launch rus_sim_recorder recorder.launch.py autostart:=true        # 起来即录
   ros2 launch rus_sim_recorder recorder.launch.py output_dir:=/data/run01
-  ros2 launch rus_sim_recorder recorder.launch.py autostart:=false       # 起来不录，等指令
   ros2 launch rus_sim_recorder recorder.launch.py enabled:=false         # 只跑节点不落盘（冒烟）
   ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_start}"
   ros2 run rus_sim_recorder rus_sim_recorder_inspect records/run_*.rusrec
 
-整系统一键（含录制，默认开）:
-  ros2 launch rus_sim_bringup rus_sim.launch.py              # 默认即录制
-  ros2 launch rus_sim_bringup rus_sim.launch.py record:=false  # 关闭录制
+整系统一键（含录制节点，默认待命，等前端 recorder_start）:
+  ros2 launch rus_sim_bringup rus_sim.launch.py                        # 起录制节点（待命）
+  ros2 launch rus_sim_bringup rus_sim.launch.py record:=false          # 不拉起录制节点
+  ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=true # 起来即录
 """
 
 import os
@@ -42,8 +44,8 @@ def generate_launch_description():
             "enabled", default_value="true",
             description="是否落盘（false = 只跑节点不写文件）"),
         DeclareLaunchArgument(
-            "autostart", default_value="true",
-            description="启动即录制（false = 起来待命，等 /recorder/command 的 recorder_start）"),
+            "autostart", default_value="false",
+            description="启动即录制（默认 false = 起来待命，等 /recorder/command 的 recorder_start）"),
         DeclareLaunchArgument(
             "output_dir", default_value="records",
             description="输出目录（相对路径按启动工作目录解析）"),

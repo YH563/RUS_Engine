@@ -21,8 +21,8 @@
 >    用于离线复盘录音（§4.7）；回执/事件新增可选字段 **`strings`（string[]）** 承载文本结果
 >    （数值仍走 `result`；两者可同时出现，见 §3.1）。
 > 9. **录制开关指令（v0.4 新增）**：`recorder_start` / `recorder_stop` / `recorder_status` 由录制节点
->    （`/recorder/command`）处理，用于运行期开 / 关落盘（§4.8）。节点默认**启动即录**
->    （参数 `autostart=true`），因此不接这三条指令时行为与以前完全一致。
+>    （`/recorder/command`）处理，用于运行期开 / 关落盘（§4.8）。节点默认**待命**
+>    （参数 `autostart=false`），由前端主动发 `recorder_start` 开录。
 
 ---
 
@@ -135,6 +135,8 @@
 >
 > **注意**：`pre_scan_done` 自 v0.5 起是**前端下发的指令**（路由到 planning），
 > 不再是后端事件——前端在半自动建图完成后发送它，planning 抓取地图快照初始化后才放行 `plan`。
+> **兼容**：`pre_scan_start`（空操作确认）与 `pre_scan_end`（等价 `pre_scan_done`）也路由到 planning，
+> 供前端既有"pre_scan_start / pre_scan_end"流程直接可用（见 §4.2 / §4.4）。
 
 **超时**：指令转发到子模块后，默认 **5000ms** 无响应 → bridge 回
 `reply(success=false, message="timeout")`。
@@ -438,11 +440,10 @@ public static class SensorFrameDecoder
 > 指令名、参数校验、路由目标以后端代码为准（`rus_sim_utils` + bridge 注册表）。
 > 下表按 bridge 当前路由分组，仅用于前端参考。
 >
-> **路由分组与模式的关系**：业务指令（`pre_scan_done` / `set_*_pose` / `plan` / `execute` /
-> `query_prescan_done`）**始终**路由到 PLANNING；`pre_scan_start` / `pre_scan_end` 路由到
-> PERCEPTION（该节点尚未实现，转发后返回 `unknown command`）；直控指令（`movej` / `movel` / `servo_*` /
-> `start_jog` / `robot_enable` 等）**始终**路由到 DRIVER。仅 `pause` / `resume` / `reset` /
-> `query_motion_done` / `stop` 随模式切换（见 §4.6）。
+> **路由分组与模式的关系**：业务指令（`pre_scan_done` / `pre_scan_start` / `pre_scan_end` /
+> `set_*_pose` / `plan` / `execute` / `query_prescan_done`）**始终**路由到 PLANNING；
+> 直控指令（`movej` / `movel` / `servo_*` / `start_jog` / `robot_enable` 等）**始终**路由到 DRIVER。
+> 仅 `pause` / `resume` / `reset` / `query_motion_done` / `stop` 随模式切换（见 §4.6）。
 >
 > **运动参数量纲（单位约定，前端按此构造参数）**：
 >
@@ -494,9 +495,11 @@ public static class SensorFrameDecoder
 
 | 指令名 | args | result | 说明 |
 |--------|------|--------|------|
-| `pre_scan_done` | 无 | 空 | **前端在半自动建图完成后下发**：planning 抓取当前地图快照初始化轨迹生成器（置预扫查门），之后 `plan` 才放行；未收到点云 / 点云为空 → `reply success=false` |
-| `set_start_pose` | [x, y, z] | 空 | 设置起点（≥3 个参数；支持 3/6/7：位置（m） / 位置（m）+RPY（rad） / 位置（m）+四元数 xyzw） |
-| `set_end_pose` | [x, y, z] | 空 | 设置终点（≥3 个参数；同上） |
+| `pre_scan_done` | 无 | 空 | **前端在半自动建图完成后下发**：planning 抓取当前地图快照初始化轨迹生成器（置预扫查门），之后 `plan` 才放行；未收到点云 / 点云为空 → `reply success=false`。`pre_scan_end` 为**等价别名**（兼容前端既有流程） |
+| `pre_scan_start` | 无 | 空 | **兼容指令**：预扫查开始（planning 侧无动作，直接 `reply success=true`） |
+| `pre_scan_end` | 无 | 空 | **兼容别名**：等价 `pre_scan_done`（见上）|
+| `set_start_pose` | [x, y, z, …] | 空 | 设置起点。有参：支持 3/6/7（位置 m / 位置+RPY rad / 位置+四元数 xyzw）；**无参**：用**当前 TCP 位姿**（`/driver/state` 的 `tool_pose`，即"记录当前位姿为起点"） |
+| `set_end_pose` | [x, y, z, …] | 空 | 设置终点（同上，无参用当前 TCP 位姿） |
 | `plan` | 无 | 空 | 开始规划（未完成预扫查或未设置起终点则失败 + `error` 事件；完成后有 `plan_done` 事件） |
 | `execute` | 无 | 空 | 开始执行（伺服按 `servo_rate_hz` 逐点下发；完成后有 `scan_done` 事件） |
 | `query_prescan_done` | 无 | [0/1] | 查询预扫查是否完成 |
@@ -550,10 +553,10 @@ public static class SensorFrameDecoder
 
 ### 4.4 PERCEPTION 指令
 
-bridge 已将 `pre_scan_start` / `pre_scan_end` 注册到 PERCEPTION，但 **perception 节点尚未实现**
-（转发后返回 `unknown command: ...`）。真正的"半自动建图完成"入口在 planning 的
-`pre_scan_done`（见 §4.2）。另外 `map_clear` / `load_cloud` 在 perception 已实现，但 bridge 未注册，
-前端暂不可达。感知大块数据（点云 / 图像）始终走 `/sensor` 二进制通道，不通过 command 传输。
+`pre_scan_start` / `pre_scan_end` **已改路由到 PLANNING**（兼容前端既有流程，见 §4.2）；
+`pre_scan_done` 是"半自动建图完成"的主入口（同样 → planning）。
+`map_clear` / `load_cloud` 在 perception 已实现，但 bridge 未注册，前端暂不可达。
+感知大块数据（点云 / 图像）始终走 `/sensor` 二进制通道，不通过 command 传输。
 
 ### 4.5 多目标扇出指令
 
@@ -572,8 +575,7 @@ bridge 已将 `pre_scan_start` / `pre_scan_end` 注册到 PERCEPTION，但 **per
 |------|------------------|----------|
 | `pause` / `resume` / `reset` / `query_motion_done` | → PLANNING（planning 协调扫查） | → DRIVER（直控） |
 | `stop` | 扇出 `{PLANNING, DRIVER}` | 仅 DRIVER（急停直达） |
-| `pre_scan_done` / `set_*_pose` / `plan` / `execute` / `query_prescan_done` | → PLANNING | → PLANNING（不变） |
-| `pre_scan_start` / `pre_scan_end` | → PERCEPTION（未实现） | → PERCEPTION（未实现） |
+| `pre_scan_done` / `pre_scan_start` / `pre_scan_end` / `set_*_pose` / `plan` / `execute` / `query_prescan_done` | → PLANNING | → PLANNING（不变） |
 | 直控指令（`movej` / `servo_*` / `start_jog` 等） | → DRIVER | → DRIVER（不变） |
 | 回放指令（`replay_*`） | → REPLAYER | → REPLAYER（不变，与手动/自动无关） |
 | 录制指令（`recorder_*`） | → RECORDER | → RECORDER（不变，与手动/自动无关） |
@@ -684,8 +686,8 @@ bridge 已将 `pre_scan_start` / `pre_scan_end` 注册到 PERCEPTION，但 **per
 > （格式与体检见 `docs/Protocol/RecFormat.md`）。本节 3 条指令用于**运行期开关落盘**：
 > 不决定"录什么"（通道由启动参数 `record_state` / `record_sensor` 决定），只决定"录不录"。
 >
-> 默认 `autostart=true`：节点起来就开始录（等价于启动后立刻收到一次 `recorder_start`），
-> 因此**不接这三条指令时行为与以前完全一致**；要"由前端决定何时开录"就设 `autostart=false`。
+> 默认 `autostart=false`：节点起来处于**待命**（`state=0`），由前端发 `recorder_start` 开录；
+> 要"起来即录"就设 `autostart=true`。
 >
 > 与在线链路的关系：录制是**旁路** —— 只订阅、不发布，各模块与前端可视化都不需要
 > 感知它是否在录；`recorder_stop` 只是停写盘，话题流照常。本节 3 条指令
@@ -763,7 +765,8 @@ bridge 已将 `pre_scan_start` / `pre_scan_end` 注册到 PERCEPTION，但 **per
 - 未 `pre_scan_done` 直接 `plan` → `error`，`message="plan failed: 未完成预扫查"`。
 - 起终点未设置直接 `plan` → `error`，`message="plan failed: 起终点未设置"`。
 - `plan` 轨迹生成 / 插值失败 → `error`，`message="plan failed: 轨迹生成失败"` / `"plan failed: 插值失败"`。
-- 未实现的指令（如 `pre_scan_start`）→ `reply success=false`，`message="unknown command: pre_scan_start"`。
+- 未注册 / 未实现的指令 → `reply success=false`，`message="unknown command: <cmd>"`。
+  （`pre_scan_start` / `pre_scan_end` 现已兼容到 planning，不再落此列。）
 
 ---
 

@@ -44,7 +44,7 @@ rus_sim_recorder/
 | 项 | 值 |
 |----|----|
 | 可执行 | `ros2 run rus_sim_recorder rus_sim_recorder_node` |
-| 启动 | `ros2 launch rus_sim_recorder recorder.launch.py [autostart:=false] [enabled:=false] [output_dir:=…]` |
+| 启动 | `ros2 launch rus_sim_recorder recorder.launch.py [autostart:=true] [enabled:=false] [output_dir:=…]` |
 | 服务 | `/recorder/command`（`CommandService`） |
 | 落盘 | `<output_dir>/<prefix>_<时间戳>.rusrec`（滚动加 `_pNNN`），默认 `records/` |
 
@@ -73,7 +73,7 @@ rus_sim_recorder/
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `enabled` | bool | true | false = 不订阅、不落盘 |
-| `autostart` | bool | true | **启动即录**；false = 起来待命，等 `recorder_start` |
+| `autostart` | bool | false | 起来**待命**，等前端 `recorder_start`；true = 启动即录 |
 | `output_dir` | string | `records` | 输出目录（相对路径按启动工作目录解析） |
 | `file_prefix` | string | `run` | 文件名前缀 |
 | `max_file_size_mb` | int | 512 | 单文件大小上限，超出滚动；0 = 不限 |
@@ -155,8 +155,8 @@ ros2 run rus_sim_recorder rus_sim_recorder_inspect records/run_*.rusrec --scan
 ## 启动 / 常用
 
 ```bash
-ros2 launch rus_sim_recorder recorder.launch.py                    # 默认启动即录到 records/
-ros2 launch rus_sim_recorder recorder.launch.py autostart:=false   # 待命，等 recorder_start
+ros2 launch rus_sim_recorder recorder.launch.py                    # 默认待命（等前端 recorder_start），录到 records/
+ros2 launch rus_sim_recorder recorder.launch.py autostart:=true    # 启动即录
 ros2 launch rus_sim_recorder replayer.launch.py                    # 回放 records/ 中第 0 个文件
 ```
 

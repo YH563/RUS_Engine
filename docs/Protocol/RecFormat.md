@@ -232,11 +232,11 @@ ros2 service call /replayer/command rus_sim_interfaces/srv/CommandService "{comm
 
 ### 7.5 录制开关（`/recorder/command`）
 
-录制默认**启动即录**（参数 `autostart=true`），也可由外部指令在运行期开关
-（协议细节见 `docs/Protocol/WsProtocol.md` §4.8）：
+录制默认**待命**（参数 `autostart=false`），由前端主动发 `recorder_start` 开录，
+运行期可 `recorder_stop` / `recorder_status` 开关查询（协议细节见 `docs/Protocol/WsProtocol.md` §4.8）：
 
 ```bash
-ros2 launch rus_sim_recorder recorder.launch.py autostart:=false    # 起来待命，等指令
+ros2 launch rus_sim_recorder recorder.launch.py autostart:=true     # 起来即录（默认待命）
 ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_start}"
 ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_status}"
 ros2 service call /recorder/command rus_sim_interfaces/srv/CommandService "{command: recorder_stop}"

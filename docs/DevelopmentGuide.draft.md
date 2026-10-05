@@ -36,7 +36,7 @@
 | `driver_node` | `ros2 run rus_sim_driver rus_sim_driver_node` | 服务 `/driver/command`；话题 `/driver/state`、`/joint_states` |
 | `planning_node` | `ros2 run rus_sim_planning rus_sim_planning_node` | 服务 `/planning/command`；话题 `/planned_trajectory` |
 | `perception_node` | `ros2 run rus_sim_perception rus_sim_perception_node` | 服务 `/perception/command`；话题 `/preprocessed_cloud`、`/perception/frame`、`/sensor/pointcloud` |
-| `recorder_node` | `ros2 run rus_sim_recorder rus_sim_recorder_node` | 服务 `/recorder/command`（3 条 `recorder_*`：运行期开 / 关 / 查落盘）；只订阅（`/driver/state`、`/sensor/pointcloud`）；落地文件 `records/*.rusrec`（默认启动即录，`autostart=false` 则等指令） |
+| `recorder_node` | `ros2 run rus_sim_recorder rus_sim_recorder_node` | 服务 `/recorder/command`（3 条 `recorder_*`：运行期开 / 关 / 查落盘）；只订阅（`/driver/state`、`/sensor/pointcloud`）；落地文件 `records/*.rusrec`（默认**待命** `autostart=false`，等前端 `recorder_start` 开录） |
 | ~~`replayer_node`~~ ❌ 已废弃 | ~~`ros2 run rus_sim_recorder rus_sim_recorder_replay`~~ | 回放移交前端（前端直读 `records/*.rusrec`）；后端 replayer 暂留过渡 |
 | （工具） | `ros2 run rus_sim_recorder rus_sim_recorder_inspect` | 离线体检 `.rusrec`（无需 ROS 图，可直跑 `install/.../lib/rus_sim_recorder/` 下的可执行） |
 
@@ -133,7 +133,7 @@ ros2 launch rus_sim_bridge bridge.launch.py        # WS 网关
 ros2 launch rus_sim_driver driver.launch.py        # 驱动 + robot_state_publisher + RViz
 ros2 launch rus_sim_planning planning.launch.py    # 规划
 ros2 launch rus_sim_perception perception.launch.py# 感知
-ros2 launch rus_sim_recorder recorder.launch.py    # 录制（默认录到 records/）
+ros2 launch rus_sim_recorder recorder.launch.py    # 录制节点（默认待命，等指令；录到 records/）
 # ❌ 后端回放已废弃（移交前端）：前端直读 records/*.rusrec；过渡期仍可 replayer.launch.py
 ros2 launch rus_sim_driver keyboard_control.launch.py  # 键盘点动
 
@@ -142,9 +142,9 @@ ros2 run rus_sim_recorder rus_sim_recorder_inspect records/run_*.rusrec --check-
 ```
 
 `rus_sim.launch.py` 只是用 `IncludeLaunchDescription` 组合上面四个 launch（`src/rus_sim_bringup/launch/rus_sim.launch.py`）；
-录制默认**打开**：`rus_sim.launch.py` 会把 `rus_sim_recorder/launch/recorder.launch.py` 一并拉起
-（默认**启动即录**；`record:=false` 则不拉起录制，`record_autostart:=false` 则起来处于待命，
-等前端 `recorder_start`，见 `WsProtocol.md` §4.8）。
+录制节点默认**拉起**（`rus_sim.launch.py` 会 include `rus_sim_recorder/launch/recorder.launch.py`），
+但**待命不录**：由前端主动发 `recorder_start` 才开始（`recorder_stop` 停录封存）；
+`record:=false` 完全不拉起节点，`record_autostart:=true` 则起来即录，见 `WsProtocol.md` §4.8。
 记录文件格式见 `docs/Protocol/RecFormat.md`。
 
 ---
@@ -518,7 +518,7 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 | 参数 | 类型 | 默认值 | 文件值 | 说明 |
 |------|------|--------|--------|------|
 | `enabled` | bool | true | true | false = 不订阅、不落盘（只留一行日志） |
-| `autostart` | bool | true | true | **启动即录**；false = 起来处于待命（`state=0`），等 `/recorder/command` 的 `recorder_start` |
+| `autostart` | bool | false | false | 起来**待命**（`state=0`），等前端 `/recorder/command` 的 `recorder_start`；true = 启动即录 |
 | `output_dir` | string | `records` | `records` | 输出目录（相对路径按启动工作目录解析，不存在则创建；日志打印绝对路径） |
 | `file_prefix` | string | `run` | `run` | 文件名 `<prefix>_<时间戳>.rusrec`；滚动加 `_p001/_p002` |
 | `max_file_size_mb` | int | 512 | 512 | 单文件上限，超出即封存（写尾索引）并滚动；0 = 不限 |
@@ -538,7 +538,7 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 > （协议见 `docs/Protocol/WsProtocol.md` §4.8，文件口径见 `RecFormat.md` §7.5）。
 > 路由在 bridge `command_dispatcher.cpp::init_routing()` 注册为 `{Module::RECORDER}`，
 > **不随 `set_mode` 切换**；`recorder_stop` 会**排空队列**再写尾索引，`recorder_start`
-> 一律打开新文件（`_pNNN` 递增，绝不覆盖）。默认 `autostart=true` 时行为与历史版本一致。
+> 一律打开新文件（`_pNNN` 递增，绝不覆盖）。默认 `autostart=false`（待命），由前端 `recorder_start` 触发。
 
 ### 8.6 `replayer_node`（`config/replayer_params.yaml`）❌ 已废弃
 
@@ -662,7 +662,7 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
 
 | 文件 | 内容 |
 |------|------|
-| `launch/rus_sim.launch.py` | 组合 bridge + driver + planning + perception + recorder（默认含录制；`record:=false` 关闭） |
+| `launch/rus_sim.launch.py` | 组合 bridge + driver + planning + perception + recorder（默认含录制节点，待命；`record:=false` 不拉起） |
 | `scripts/` | `check_pipeline.py`、`exec_monitor.py`、`flange_vis.py`、`movel_test.py`、`movel_single_test.py`、`tool_calib_six_point.py`、`tool_tf_vis.py`、`traj_vis.py`、`run_sensor_tf_rviz.sh`、`test_prescan.sh`（**联调脚本，未在 CMakeLists 中安装**） |
 
 ---
@@ -751,7 +751,7 @@ bridge 注册表登记的是 `pre_scan_start` / `pre_scan_end` / `query_prescan_
    **`strings` 文本结果字段**（`CommandService.srv::Response.strings`），见 `WsProtocol.md` §3.1 / §4.7。
 9. ✅ **录制运行期开关**（已落地）：`recorder_node` 的写线程改为**常驻**，"是否落盘"由期望状态驱动，
    新增服务 `/recorder/command`（3 条 `recorder_*`：`recorder_start` / `recorder_stop` /
-   `recorder_status`，`Module::RECORDER`）与参数 `autostart`（默认 true = 启动即录，**向后兼容**）。
+   `recorder_status`，`Module::RECORDER`）与参数 `autostart`（默认 false = 待命，由前端 `recorder_start` 开录）。
    口径：`recorder_stop` 先**排空队列**再写尾索引（回执返回即文件完好）；`recorder_start` 一律
    打开新文件（`_pNNN` 递增，**绝不覆盖**）；停录期间消息不入队、不计 `dropped`；写失败即熔断
    （`state=2`，需重启节点）。协议见 `WsProtocol.md` §4.8、文件口径见 `RecFormat.md` §7.5。

@@ -65,10 +65,12 @@ rosdep install --from-paths src --ignore-src -r -y
 colcon build
 source install/setup.bash
 
-# 一键启动（驱动 + 规划 + 感知 + 桥接 + 录制；默认启动即录，写到 records/）
+# 一键启动（驱动 + 规划 + 感知 + 桥接 + 录制节点）
+# 录制默认**待命**：由前端发 recorder_start 开始录，写到 records/
 ros2 launch rus_sim_bringup rus_sim.launch.py
 
-# 不需要录制时
+# 起来即录 / 不拉起录制节点
+ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=true
 ros2 launch rus_sim_bringup rus_sim.launch.py record:=false
 ```
 

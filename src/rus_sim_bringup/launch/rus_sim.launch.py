@@ -6,14 +6,19 @@
   - rus_sim_driver/launch/driver.launch.py        （驱动 + robot_state_publisher；RViz 已注释）
   - rus_sim_planning/launch/planning.launch.py    （轨迹规划 / 伺服执行）
   - rus_sim_perception/launch/perception.launch.py（实时建图 / 离线点云加载）
-  - rus_sim_recorder/launch/recorder.launch.py    （记录层，默认拉起；record:=false 关闭）
+  - rus_sim_recorder/launch/recorder.launch.py    （记录层，默认拉起但待命；record:=false 完全不拉）
 
 用法：
-  ros2 launch rus_sim_bringup rus_sim.launch.py                         # 默认整系统 + 录制
-  ros2 launch rus_sim_bringup rus_sim.launch.py record:=false           # 不录制
+  ros2 launch rus_sim_bringup rus_sim.launch.py                         # 默认整系统 + 录制节点（待命）
+  ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=true  # 起来即录
+  ros2 launch rus_sim_bringup rus_sim.launch.py record:=false           # 不拉起录制节点
   ros2 launch rus_sim_bringup rus_sim.launch.py record_dir:=/data/run01
-  ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=false # 起来不录，等 recorder_start
   ros2 launch rus_sim_bringup rus_sim.launch.py load_test_cloud:=false  # 不加载联调测试点云
+
+录制开关（前端主动发，`/recorder/command`）：
+  recorder_start   开始录制（新文件）
+  recorder_stop    停录并封存（写尾索引）
+  recorder_status  查询状态
 """
 import os
 
@@ -51,17 +56,17 @@ def generate_launch_description():
         'launch', 'recorder.launch.py')
 
     return LaunchDescription([
-        # 记录层默认开（一键整系统即录制）：点云通道可达 MB/s 量级、持续写盘，
-        # 不需要录制时用 record:=false 关闭；磁盘占用由 recorder 的滚动上限约束。
+        # 记录层默认拉起节点（保证 /recorder/command 可用），但**待命**：由前端主动发
+        # recorder_start 才开始录（recorder_stop 停录封存）。不需要录制节点时 record:=false。
         DeclareLaunchArgument(
             'record', default_value='true',
-            description='是否同时启动 rus_sim_recorder 录制数据流（false = 不录制）'),
+            description='是否启动 rus_sim_recorder 节点（false = 完全不拉起；节点起来默认待命）'),
         DeclareLaunchArgument(
             'record_dir', default_value='records',
             description='录制输出目录（相对路径按启动工作目录解析）'),
         DeclareLaunchArgument(
-            'record_autostart', default_value='true',
-            description='录制是否启动即开始（false = 起来待命，由前端 recorder_start 开始）'),
+            'record_autostart', default_value='false',
+            description='是否启动即录（默认 false = 待命，等前端 recorder_start；true = 起来即录）'),
         # 联调测试点云开关（透传给感知层）：默认【不加载】。
         # 该点云是 rus_sim_gen_test_cloud 生成的合成起伏面（0.5×0.6m、12221 点），
         # 会作为地图种子永久留在地图里、并混进前端 /sensor 通路，造成"散乱点"观感。

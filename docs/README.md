@@ -16,6 +16,8 @@
 | [Protocol/WsProtocol.md](./Protocol/WsProtocol.md) | 前后端 WebSocket 协议（通道、指令、reply/event、state/sensor 线格式） | 前端联调 |
 | [Protocol/RecFormat.md](./Protocol/RecFormat.md) | `.rusrec` 记录文件格式（头 / 记录 / 索引 / 容量估算） | 录音保存、体检工具、前端回放解码 |
 | [Protocol/README.md](./Protocol/README.md) | 协议文档索引与速查表 | 快速定位协议条款 |
+| [TestReport.md](./TestReport.md) | **测试报告**：单元测试方案、覆盖清单、结果、未覆盖项 | 汇报 / 回归前 |
+| [CommandAlignment_Plan.md](./CommandAlignment_Plan.md) | **前后端指令接口对齐计划**：不对齐清单、目标契约、后端/前端任务拆分 | 与 RUSTool 联调对齐时 |
 | `rus_sim_<包名>/rus_sim_<包名>.md` | 单模块文档：结构 / 输入输出 / 指令 / 参数 / 启动 | 定位到某个模块时 |
 
 > 接口事实**一律以代码为准**；文档与代码不一致时，先改代码或先在此登记（见 draft §11 冲突清单）。
@@ -75,17 +77,17 @@ source install/setup.bash
 ```
 
 ```bash
-# 一键全栈（默认含录制，启动即录到 records/）
+# 一键全栈（默认含录制节点，待命；前端 recorder_start 开录，写到 records/）
 ros2 launch rus_sim_bringup rus_sim.launch.py
-ros2 launch rus_sim_bringup rus_sim.launch.py record:=false            # 关闭录制
-ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=false  # 录制备好待命，等前端 recorder_start
+ros2 launch rus_sim_bringup rus_sim.launch.py record_autostart:=true   # 起来即录
+ros2 launch rus_sim_bringup rus_sim.launch.py record:=false            # 不拉起录制节点
 
 # 分开启动（调试单模块）
 ros2 launch rus_sim_bridge      bridge.launch.py        # WS 网关
 ros2 launch rus_sim_driver      driver.launch.py        # 驱动 + robot_state_publisher
 ros2 launch rus_sim_planning    planning.launch.py      # 规划
 ros2 launch rus_sim_perception  perception.launch.py    # 感知
-ros2 launch rus_sim_recorder    recorder.launch.py      # 录制（默认录到 records/）
+ros2 launch rus_sim_recorder    recorder.launch.py      # 录制节点（默认待命，等前端 recorder_start）
 ros2 launch rus_sim_driver      keyboard_control.launch.py  # 键盘点动
 # ❌ 后端回放已废弃（移交前端）：前端直读 records/*.rusrec；过渡期仍可 replayer.launch.py
 
