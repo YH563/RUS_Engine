@@ -384,6 +384,10 @@ namespace RusDriverNode {
                 ip.c_str(), rpc_err);
         }
 
+        // 重新套用工具坐标系：新驱动对象默认是法兰/索引 0，
+        // 不回填会导致切换后探头（工具坐标系）"掉"掉。
+        init_tool_coords();
+
         RCLCPP_INFO(get_logger(), "驱动已切换为 %s (ip=%s)", type_str, ip.c_str());
         return true;
     }
