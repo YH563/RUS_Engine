@@ -281,12 +281,30 @@ namespace RusSimPlanning {
                 "plan failed: 插值失败", {}, client_id);
             return false;
         }
+        const auto& dense = interpolator_.DenseTrajectory();
         RCLCPP_INFO(get_logger(), "规划完成：稀疏 %zu 点 → 稠密 %zu 点",
-            waypoints.size(), interpolator_.DenseTrajectory().size());
+            waypoints.size(), dense.size());
         // 规划轨迹发布到 RViz（调试：对比实际执行位姿）
         publish_planned_path();
-        // 规划完成事件（关联 plan 指令）
-        publish_event(RusUtils::EventName::kPlanDone, true, "plan done", {}, client_id);
+
+        // 规划结果回给前端：**三维点序列**（稠密轨迹的位置 x,y,z 扁平化）。
+        // 超上限时等距抽稀，避免事件报文过大；末点必含。
+        std::vector<double> traj_xyz;
+        const size_t kCap = 2000;
+        const size_t step = dense.size() > kCap ? (dense.size() + kCap - 1) / kCap : 1;
+        traj_xyz.reserve((dense.size() / step + 2) * 3);
+        for (size_t i = 0; i < dense.size(); i += step) {
+            traj_xyz.push_back(dense[i].position.x);
+            traj_xyz.push_back(dense[i].position.y);
+            traj_xyz.push_back(dense[i].position.z);
+        }
+        if (!dense.empty() && (dense.size() - 1) % step != 0) {
+            traj_xyz.push_back(dense.back().position.x);
+            traj_xyz.push_back(dense.back().position.y);
+            traj_xyz.push_back(dense.back().position.z);
+        }
+        // 规划完成事件（关联 plan 指令；result = [x,y,z, x,y,z, …] 轨迹点序列）
+        publish_event(RusUtils::EventName::kPlanDone, true, "plan done", traj_xyz, client_id);
         return true;
     }
 

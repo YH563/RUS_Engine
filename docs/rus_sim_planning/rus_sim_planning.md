@@ -65,7 +65,7 @@ rus_sim_planning/
 
 | 事件 | 触发 | 说明 |
 |------|------|------|
-| `plan_done` | `plan` 成功 | `ack_id` = `plan` 的指令 id |
+| `plan_done` | `plan` 成功 | `ack_id` = `plan` 的指令 id；`result` = **轨迹三维点序列** `[x,y,z,…]`（稠密，扁平化，单位 m，base_link）|
 | `scan_done` | 伺服执行完毕 / 被 `stop` 中止 | 成功或中止由 `success` 区分 |
 | `error` | 前置门失败、轨迹生成 / 插值失败 | 失败 message 形如 `plan failed: 未完成预扫查` |
 

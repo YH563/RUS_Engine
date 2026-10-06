@@ -98,8 +98,10 @@
   "result": [4.0, 0.0], "strings": ["run_20260926_120000.rusrec", "run_20260926_120500.rusrec"] }
 
 // event：异步完成通知（id 固定 0，ack_id 关联原指令）
+// plan_done 的 result = 规划轨迹的**三维点序列**（稠密，扁平化 [x,y,z, x,y,z, …]，单位 m，base_link）
 { "type": "event", "id": 0, "ack_id": 3, "event": "plan_done",
-  "success": true, "message": "plan done", "result": [], "strings": [] }
+  "success": true, "message": "plan done",
+  "result": [-0.110,0.260,-0.043, -0.111,0.259,-0.043, "..."], "strings": [] }
 { "type": "event", "id": 0, "ack_id": 3, "event": "error",
   "success": false, "message": "plan failed: 未完成预扫查", "result": [], "strings": [] }
 ```
@@ -500,7 +502,7 @@ public static class SensorFrameDecoder
 | `pre_scan_end` | 无 | 空 | **兼容别名**：等价 `pre_scan_done`（见上）|
 | `set_start_pose` | [x, y, z, …] | 空 | 设置起点。有参：支持 3/6/7（位置 m / 位置+RPY rad / 位置+四元数 xyzw）；**无参**：用**当前 TCP 位姿**（`/driver/state` 的 `tool_pose`，即"记录当前位姿为起点"） |
 | `set_end_pose` | [x, y, z, …] | 空 | 设置终点（同上，无参用当前 TCP 位姿） |
-| `plan` | 无 | 空 | 开始规划（未完成预扫查或未设置起终点则失败 + `error` 事件；完成后有 `plan_done` 事件） |
+| `plan` | 无 | 空 | 开始规划（未完成预扫查或未设置起终点则失败 + `error` 事件）。**规划结果（轨迹三维点序列）在随后的 `plan_done` 事件 `result` 里**（本 reply 不带结果），见 §5 |
 | `execute` | 无 | 空 | 开始执行（伺服按 `servo_rate_hz` 逐点下发；完成后有 `scan_done` 事件） |
 | `query_prescan_done` | 无 | [0/1] | 查询预扫查是否完成 |
 | `query_motion_done` | 无 | [0/1] | 查询动作是否完成（planning 状态：执行中/暂停=0，空闲=1） |
@@ -755,7 +757,7 @@ public static class SensorFrameDecoder
 
 | 事件名 | 触发时机 | 关联指令（ack_id） | success | result |
 |--------|----------|--------------------|---------|--------|
-| `plan_done` | 轨迹规划完成 | `plan` | true | 空 |
+| `plan_done` | 轨迹规划完成 | `plan` | true | **轨迹点序列** `[x,y,z, …]`（稠密，扁平化；超 2000 点等距抽稀，末点必含） |
 | `scan_done` | 正式扫查执行完成 / 被 stop 中断 | `execute` | true / false（中断） | 空 |
 | `motion_done` | 当前运动完成（预留） | 任意运动指令 | true | 空 |
 | `replay_done` | 回放播到末尾（`loop=false`；`loop=true` 时不发） | `replay_start` / `replay_resume` | true | [已发布条数] |
@@ -780,7 +782,7 @@ public static class SensorFrameDecoder
  │  set_start_pose [-0.4,-0.21,-0.16] ► reply ok
  │  set_end_pose   [-0.41,0.24,-0.17] ► reply ok
  │  plan ───────────────────────►  reply ok
- │  ◄── event plan_done (ack_id=plan)
+ │  ◄── event plan_done (ack_id=plan, result=[x,y,z, x,y,z, …] 轨迹点序列)
  │  execute ────────────────────►  reply ok
  │                                   伺服逐点下发 @125Hz（约 3s）
  │  ◄── event scan_done (ack_id=execute)
